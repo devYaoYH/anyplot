@@ -30,6 +30,12 @@ def sample_data():
     ]
 
 
+@pytest.fixture
+def mock_api_key():
+    """Mock API key for testing."""
+    return "sk-ant-test-key-12345"
+
+
 class TestHealthEndpoint:
     """Tests for the /health endpoint."""
 
@@ -44,7 +50,7 @@ class TestHealthEndpoint:
 class TestVisualizeEndpoint:
     """Tests for the /visualize endpoint."""
 
-    def test_visualize_with_mocked_agent(self, client, sample_data):
+    def test_visualize_with_mocked_agent(self, client, sample_data, mock_api_key):
         """Visualize endpoint should return image when agent returns valid code."""
         # Mock code that will be "generated" by the agent
         mock_code = """
@@ -72,6 +78,7 @@ plt.title('Salary by Age')
                 json={
                     "data": sample_data,
                     "prompt": "Create a bar chart of salaries by age",
+                    "api_key": mock_api_key,
                 },
             )
 
@@ -84,7 +91,7 @@ plt.title('Salary by Age')
         image_bytes = base64.b64decode(data["image"])
         assert image_bytes[:8] == b"\x89PNG\r\n\x1a\n"
 
-    def test_visualize_with_tool_calls(self, client, sample_data):
+    def test_visualize_with_tool_calls(self, client, sample_data, mock_api_key):
         """Visualize should handle tool calls correctly."""
         # First response requests get_schema tool
         schema_response = MagicMock()
@@ -120,6 +127,7 @@ plt.title('Salary Distribution')
                 json={
                     "data": sample_data,
                     "prompt": "Plot the salary data",
+                    "api_key": mock_api_key,
                 },
             )
 
@@ -127,21 +135,22 @@ plt.title('Salary Distribution')
         data = response.json()
         assert "image" in data
 
-    def test_visualize_empty_data_returns_error(self, client):
+    def test_visualize_empty_data_returns_error(self, client, mock_api_key):
         """Empty data should return 400 error."""
         response = client.post(
             "/visualize",
             json={
                 "data": [],
                 "prompt": "Create a chart",
+                "api_key": mock_api_key,
             },
         )
 
         assert response.status_code == 400
 
-    def test_visualize_invalid_code_from_agent(self, client, sample_data):
-        """Invalid code from agent should return error."""
-        # Code that uses dangerous imports
+    def test_visualize_invalid_code_from_agent(self, client, sample_data, mock_api_key):
+        """Invalid code from agent should return error after retries."""
+        # Code that uses dangerous imports - agent keeps generating bad code
         mock_code = """
 import os
 os.system('ls')
@@ -154,6 +163,7 @@ os.system('ls')
 
         with patch("src.agent.anthropic.Anthropic") as mock_anthropic:
             mock_client = MagicMock()
+            # Return same bad code for all retry attempts
             mock_client.messages.create.return_value = mock_response
             mock_anthropic.return_value = mock_client
 
@@ -162,13 +172,14 @@ os.system('ls')
                 json={
                     "data": sample_data,
                     "prompt": "Create a chart",
+                    "api_key": mock_api_key,
                 },
             )
 
         assert response.status_code == 400
         assert "validation" in response.json()["detail"].lower()
 
-    def test_visualize_no_code_block_returns_error(self, client, sample_data):
+    def test_visualize_no_code_block_returns_error(self, client, sample_data, mock_api_key):
         """Response without code block should return error."""
         mock_response = MagicMock()
         mock_response.stop_reason = "end_turn"
@@ -186,6 +197,7 @@ os.system('ls')
                 json={
                     "data": sample_data,
                     "prompt": "Create a chart",
+                    "api_key": mock_api_key,
                 },
             )
 
@@ -196,7 +208,7 @@ os.system('ls')
 class TestColumnMapping:
     """Tests for correct column mapping in visualizations."""
 
-    def test_masked_columns_mapped_correctly(self, client):
+    def test_masked_columns_mapped_correctly(self, client, mock_api_key):
         """Columns should be correctly mapped from masked to original names."""
         data = [
             {"value_x": 1, "value_y": 10},
@@ -227,17 +239,103 @@ plt.ylabel('Y Values')
                 json={
                     "data": data,
                     "prompt": "Plot x vs y",
+                    "api_key": mock_api_key,
                 },
             )
 
         assert response.status_code == 200
         # Code should have been executed successfully with column mapping
-        data = response.json()
-        assert "image" in data
+        resp_data = response.json()
+        assert "image" in resp_data
 
         # Verify it's a valid PNG
-        image_bytes = base64.b64decode(data["image"])
+        image_bytes = base64.b64decode(resp_data["image"])
         assert image_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+class TestRetryFunctionality:
+    """Tests for code refinement and retry on execution errors."""
+
+    def test_retry_on_execution_error_succeeds(self, client, sample_data, mock_api_key):
+        """Agent should retry and fix code when execution fails."""
+        # First code has a bug (missing figure)
+        bad_code = """
+# This will fail because 'nonexistent' column doesn't exist
+plt.plot(df['nonexistent'])
+"""
+        # Fixed code that works
+        good_code = """
+plt.figure()
+plt.plot(df['salary'])
+plt.title('Salary')
+"""
+        # First response returns bad code
+        first_response = MagicMock()
+        first_response.stop_reason = "end_turn"
+        first_response.content = [
+            MagicMock(type="text", text=f"```python\n{bad_code}\n```")
+        ]
+
+        # Second response (after error feedback) returns good code
+        second_response = MagicMock()
+        second_response.stop_reason = "end_turn"
+        second_response.content = [
+            MagicMock(type="text", text=f"```python\n{good_code}\n```")
+        ]
+
+        with patch("src.agent.anthropic.Anthropic") as mock_anthropic:
+            mock_client = MagicMock()
+            # First call returns bad code, second call (refinement) returns good code
+            mock_client.messages.create.side_effect = [first_response, second_response]
+            mock_anthropic.return_value = mock_client
+
+            response = client.post(
+                "/visualize",
+                json={
+                    "data": sample_data,
+                    "prompt": "Plot salary data",
+                    "api_key": mock_api_key,
+                },
+            )
+
+        # Should succeed after retry
+        assert response.status_code == 200
+        data = response.json()
+        assert "image" in data
+        # The returned code should be the fixed version
+        assert "salary" in data["code"]
+
+    def test_max_retries_exhausted_returns_error(self, client, sample_data, mock_api_key):
+        """Should return error after max retries are exhausted."""
+        # Code that always fails execution (references non-existent column)
+        bad_code = """
+plt.figure()
+plt.plot(df['this_column_does_not_exist'])
+"""
+        mock_response = MagicMock()
+        mock_response.stop_reason = "end_turn"
+        mock_response.content = [
+            MagicMock(type="text", text=f"```python\n{bad_code}\n```")
+        ]
+
+        with patch("src.agent.anthropic.Anthropic") as mock_anthropic:
+            mock_client = MagicMock()
+            # Always return the same bad code
+            mock_client.messages.create.return_value = mock_response
+            mock_anthropic.return_value = mock_client
+
+            response = client.post(
+                "/visualize",
+                json={
+                    "data": sample_data,
+                    "prompt": "Plot data",
+                    "api_key": mock_api_key,
+                },
+            )
+
+        # Should fail after exhausting retries
+        assert response.status_code == 400
+        assert "retries" in response.json()["detail"].lower()
 
 
 class TestAPIValidation:

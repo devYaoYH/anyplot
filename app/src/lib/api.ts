@@ -87,3 +87,89 @@ export async function visualize(request: VisualizeRequest): Promise<VisualizeRes
 
   return response.json();
 }
+
+export interface StreamEvent {
+  event: 'status' | 'result' | 'error';
+  data: StatusEventData | ResultEventData | ErrorEventData;
+}
+
+export interface StatusEventData {
+  stage: 'initializing' | 'generating' | 'validating' | 'executing' | 'retrying';
+  message: string;
+  attempt?: number;
+}
+
+export interface ResultEventData {
+  image: string;
+  code: string;
+}
+
+export interface ErrorEventData {
+  message: string;
+}
+
+export type StreamCallback = (event: StreamEvent) => void;
+
+export async function visualizeStream(
+  request: VisualizeRequest,
+  onEvent: StreamCallback,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/visualize/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError(
+      `Visualization stream failed: ${error.detail}`,
+      response.status,
+      error.detail
+    );
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ApiError('No response body', 500);
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE events from buffer
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+    let currentEvent: string | null = null;
+    let currentData: string | null = null;
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        currentData = line.slice(6).trim();
+      } else if (line === '' && currentEvent && currentData) {
+        // End of event, emit it
+        try {
+          const data = JSON.parse(currentData);
+          onEvent({ event: currentEvent as StreamEvent['event'], data });
+        } catch {
+          console.error('Failed to parse SSE data:', currentData);
+        }
+        currentEvent = null;
+        currentData = null;
+      }
+    }
+  }
+}

@@ -13,6 +13,7 @@ describe('VisualizationPanel', () => {
     imageBase64: null,
     code: null,
     error: null,
+    progress: null,
   };
 
   it('renders prompt textarea', () => {

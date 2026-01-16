@@ -22,6 +22,7 @@ class AgentConfig:
     max_tokens: int = 4096
     temperature: float = 0.0
     max_tool_calls: int = 10
+    max_execution_retries: int = 3
 
 
 class AgentError(Exception):
@@ -78,6 +79,7 @@ class AgentResult:
     code: str | None = None
     error: str | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Agent:
@@ -140,6 +142,7 @@ class Agent:
                     success=False,
                     error=f"API error: {str(e)}",
                     tool_calls=tool_calls_made,
+                    messages=messages,
                 )
 
             # Check if we need to process tool calls
@@ -176,12 +179,16 @@ class Agent:
 
             else:
                 # Response complete, extract code
+                # Add the final assistant response to messages
+                messages.append({"role": "assistant", "content": response.content})
+
                 code = self._extract_code(response)
                 if code:
                     return AgentResult(
                         success=True,
                         code=code,
                         tool_calls=tool_calls_made,
+                        messages=messages,
                     )
                 else:
                     # Try to get any text response
@@ -190,12 +197,14 @@ class Agent:
                         success=False,
                         error=f"No code block found in response. Response: {text_response[:500] if text_response else 'Empty'}",
                         tool_calls=tool_calls_made,
+                        messages=messages,
                     )
 
         return AgentResult(
             success=False,
             error=f"Max tool calls ({self.config.max_tool_calls}) exceeded",
             tool_calls=tool_calls_made,
+            messages=messages,
         )
 
     def _build_anthropic_tools(self) -> list[dict[str, Any]]:
@@ -233,3 +242,85 @@ class Agent:
             if block.type == "text":
                 texts.append(block.text)
         return "\n".join(texts) if texts else None
+
+    def refine_code(
+        self,
+        previous_result: AgentResult,
+        execution_error: str,
+        stderr: str | None = None,
+    ) -> AgentResult:
+        """Refine code based on execution errors.
+
+        This method continues the conversation from a previous result,
+        providing the execution error to the agent so it can fix the code.
+
+        Args:
+            previous_result: The previous AgentResult containing messages and code
+            execution_error: The error message from code execution
+            stderr: Optional stderr output from execution
+
+        Returns:
+            AgentResult with refined code or error
+        """
+        # Build the error feedback message
+        error_feedback = f"""The code you generated failed to execute with the following error:
+
+Error: {execution_error}
+"""
+        if stderr:
+            error_feedback += f"""
+Stderr output:
+{stderr}
+"""
+        error_feedback += """
+Please analyze the error and provide corrected Python code that will successfully create the visualization.
+Remember:
+- The DataFrame is called `df` and has the original (unmasked) column names
+- Use matplotlib.pyplot (imported as plt)
+- Do not call plt.show() - the figure will be saved automatically
+
+Provide the corrected code in a ```python code block."""
+
+        # Continue from previous messages
+        messages = list(previous_result.messages)  # Copy to avoid mutation
+        messages.append({"role": "user", "content": error_feedback})
+
+        tool_calls_made = list(previous_result.tool_calls)  # Copy previous tool calls
+
+        try:
+            response = self._client.messages.create(
+                model=self.config.model,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+                system=SYSTEM_PROMPT,
+                tools=self._build_anthropic_tools(),
+                messages=messages,
+            )
+        except anthropic.APIError as e:
+            return AgentResult(
+                success=False,
+                error=f"API error during refinement: {str(e)}",
+                tool_calls=tool_calls_made,
+                messages=messages,
+            )
+
+        # Add the assistant's response to messages
+        messages.append({"role": "assistant", "content": response.content})
+
+        # Extract the refined code
+        code = self._extract_code(response)
+        if code:
+            return AgentResult(
+                success=True,
+                code=code,
+                tool_calls=tool_calls_made,
+                messages=messages,
+            )
+        else:
+            text_response = self._extract_text(response)
+            return AgentResult(
+                success=False,
+                error=f"No code block found in refinement response. Response: {text_response[:500] if text_response else 'Empty'}",
+                tool_calls=tool_calls_made,
+                messages=messages,
+            )

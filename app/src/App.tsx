@@ -31,7 +31,9 @@ function App() {
     isLoading: visualizeLoading,
     error: visualizeError,
     result: visualizeResult,
+    progress: visualizeProgress,
     generateVisualization,
+    cancelVisualization,
     clearResult,
   } = useVisualize();
 
@@ -161,10 +163,12 @@ function App() {
             </h2>
             <VisualizationPanel
               onVisualize={handleVisualize}
+              onCancel={cancelVisualization}
               isLoading={visualizeLoading}
               imageBase64={visualizeResult?.image || null}
               code={visualizeResult?.code || null}
               error={visualizeError}
+              progress={visualizeProgress}
               disabled={!hasQueryResult}
             />
           </section>

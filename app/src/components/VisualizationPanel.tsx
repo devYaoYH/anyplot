@@ -3,22 +3,35 @@
  */
 
 import { useState } from 'react';
+import type { ProgressStatus } from '../hooks/useVisualize';
 
 interface VisualizationPanelProps {
   onVisualize: (prompt: string) => void;
+  onCancel?: () => void;
   isLoading: boolean;
   imageBase64: string | null;
   code: string | null;
   error: string | null;
+  progress: ProgressStatus | null;
   disabled?: boolean;
 }
 
+const stageLabels: Record<ProgressStatus['stage'], string> = {
+  initializing: 'Initializing',
+  generating: 'Generating code',
+  validating: 'Validating code',
+  executing: 'Executing',
+  retrying: 'Retrying',
+};
+
 export function VisualizationPanel({
   onVisualize,
+  onCancel,
   isLoading,
   imageBase64,
   code,
   error,
+  progress,
   disabled = false,
 }: VisualizationPanelProps) {
   const [prompt, setPrompt] = useState('');
@@ -49,22 +62,50 @@ export function VisualizationPanel({
             ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}
           `}
         />
-        <button
-          type="submit"
-          disabled={disabled || isLoading || !prompt.trim()}
-          className={`
-            px-4 py-2 rounded-md text-white font-medium
-            transition-colors duration-200
-            ${
-              disabled || isLoading || !prompt.trim()
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-green-600 hover:bg-green-700'
-            }
-          `}
-        >
-          {isLoading ? 'Generating...' : 'Generate Visualization'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            disabled={disabled || isLoading || !prompt.trim()}
+            className={`
+              px-4 py-2 rounded-md text-white font-medium
+              transition-colors duration-200
+              ${
+                disabled || isLoading || !prompt.trim()
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700'
+              }
+            `}
+          >
+            {isLoading ? 'Generating...' : 'Generate Visualization'}
+          </button>
+          {isLoading && onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2 rounded-md text-gray-700 border border-gray-300 hover:bg-gray-50 transition-colors duration-200"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </form>
+
+      {progress && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+          <div className="flex items-center gap-3">
+            <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full" />
+            <div>
+              <p className="text-sm font-medium text-blue-800">
+                {stageLabels[progress.stage]}
+                {progress.attempt && progress.attempt > 1 && (
+                  <span className="text-blue-600"> (Attempt {progress.attempt})</span>
+                )}
+              </p>
+              <p className="text-sm text-blue-600">{progress.message}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-md">
