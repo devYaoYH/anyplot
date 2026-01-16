@@ -1,0 +1,17 @@
+[project]
+name = "sanctum-tests"
+version = "0.1.0"
+description = "E2E tests for Sanctum"
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=8.0.0",
+    "pytest-timeout>=2.2.0",
+    "requests>=2.31.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+markers = [
+    "e2e: mark test as end-to-end test (requires ANTHROPIC_API_KEY)",
+    "timeout: mark test with timeout",
+]
