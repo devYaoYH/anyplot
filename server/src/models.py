@@ -41,6 +41,30 @@ class VisualizeResponse(BaseModel):
     code: str = Field(..., description="Generated Python code that produced the image")
 
 
+class ReplayRequest(BaseModel):
+    """Request model for the /visualize/replay endpoint."""
+
+    data: list[dict[str, Any]] = Field(
+        ..., description="Array of data rows as JSON objects (new data to visualize)"
+    )
+    code: str = Field(
+        ..., description="Previously generated visualization code to replay"
+    )
+    original_prompt: str = Field(
+        ..., description="Original user prompt (used if code needs fixing)"
+    )
+    total_budget: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=100.0,
+        description="Total privacy budget for the session",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="Optional Anthropic API key (uses server default if not provided)",
+    )
+
+
 class HealthResponse(BaseModel):
     """Response model for the /health endpoint."""
 

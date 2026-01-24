@@ -5,6 +5,7 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   visualizeStream,
+  replayStream,
   ApiError,
   getApiKey,
 } from '../lib/api';
@@ -12,8 +13,10 @@ import type {
   VisualizeRequest,
   VisualizeResponse,
   StreamEvent,
+  ReplayStreamEvent,
   StatusEventData,
   ResultEventData,
+  ReplayResultEventData,
   ErrorEventData,
   AgentLog,
 } from '../lib/api';
@@ -26,6 +29,7 @@ export interface ProgressStatus {
 
 export interface VisualizeResult extends VisualizeResponse {
   agentLog?: AgentLog;
+  wasFixed?: boolean;
 }
 
 export interface UseVisualizeReturn {
@@ -34,6 +38,7 @@ export interface UseVisualizeReturn {
   result: VisualizeResult | null;
   progress: ProgressStatus | null;
   generateVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
+  replayVisualization: (data: Record<string, unknown>[], code: string, originalPrompt: string) => Promise<void>;
   cancelVisualization: () => void;
   clearResult: () => void;
 }
@@ -129,6 +134,91 @@ export function useVisualize(): UseVisualizeReturn {
     []
   );
 
+  const replayVisualization = useCallback(
+    async (data: Record<string, unknown>[], code: string, originalPrompt: string) => {
+      if (data.length === 0) {
+        setError('No data to visualize');
+        return;
+      }
+
+      if (!code.trim()) {
+        setError('No code to replay');
+        return;
+      }
+
+      // Cancel any existing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      abortControllerRef.current = new AbortController();
+
+      setIsLoading(true);
+      setError(null);
+      setResult(null);
+      setProgress(null);
+
+      try {
+        const apiKey = getApiKey();
+        const request = {
+          data,
+          code: code.trim(),
+          original_prompt: originalPrompt,
+          ...(apiKey && { api_key: apiKey }),
+        };
+
+        await replayStream(
+          request,
+          (event: ReplayStreamEvent) => {
+            switch (event.event) {
+              case 'status': {
+                const statusData = event.data as StatusEventData;
+                setProgress({
+                  stage: statusData.stage,
+                  message: statusData.message,
+                  attempt: statusData.attempt,
+                });
+                break;
+              }
+              case 'result': {
+                const resultData = event.data as ReplayResultEventData;
+                setResult({
+                  image: resultData.image,
+                  code: resultData.code,
+                  agentLog: resultData.agent_log,
+                  wasFixed: resultData.was_fixed,
+                });
+                setProgress(null);
+                break;
+              }
+              case 'error': {
+                const errorData = event.data as ErrorEventData;
+                setError(errorData.message);
+                setProgress(null);
+                break;
+              }
+            }
+          },
+          abortControllerRef.current.signal
+        );
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return;
+        }
+        if (err instanceof ApiError) {
+          setError(err.detail || err.message);
+        } else {
+          setError(`Unexpected error: ${err}`);
+        }
+      } finally {
+        setIsLoading(false);
+        setProgress(null);
+        abortControllerRef.current = null;
+      }
+    },
+    []
+  );
+
   const cancelVisualization = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -150,6 +240,7 @@ export function useVisualize(): UseVisualizeReturn {
     result,
     progress,
     generateVisualization,
+    replayVisualization,
     cancelVisualization,
     clearResult,
   };

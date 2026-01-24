@@ -20,15 +20,21 @@ export interface LogSnapshot {
 interface LogPanelProps {
   snapshots: LogSnapshot[];
   onClearHistory: () => void;
+  onReplay?: (code: string, originalPrompt: string) => void;
+  canReplay?: boolean;
+  isLoading?: boolean;
 }
 
 interface SnapshotViewerProps {
   snapshot: LogSnapshot;
   index: number;
   onExport: () => void;
+  onReplay?: () => void;
+  canReplay?: boolean;
+  isLoading?: boolean;
 }
 
-function SnapshotViewer({ snapshot, index, onExport }: SnapshotViewerProps) {
+function SnapshotViewer({ snapshot, index, onExport, onReplay, canReplay, isLoading }: SnapshotViewerProps) {
   const formatTime = (date: Date): string => {
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
@@ -36,6 +42,9 @@ function SnapshotViewer({ snapshot, index, onExport }: SnapshotViewerProps) {
       second: '2-digit',
     });
   };
+
+  const showReplayButton = snapshot.finalCode && onReplay;
+  const replayDisabled = !canReplay || isLoading;
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -57,25 +66,59 @@ function SnapshotViewer({ snapshot, index, onExport }: SnapshotViewerProps) {
             {snapshot.success ? 'Success' : 'Failed'}
           </span>
         </div>
-        <button
-          onClick={onExport}
-          className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-          title="Export as JSON"
-        >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        <div className="flex items-center gap-1">
+          {showReplayButton && (
+            <button
+              onClick={onReplay}
+              disabled={replayDisabled}
+              className={`p-1 transition-colors ${
+                replayDisabled
+                  ? 'text-gray-300 cursor-not-allowed'
+                  : 'text-blue-500 hover:text-blue-700'
+              }`}
+              title={
+                !canReplay
+                  ? 'Load data and run a query first'
+                  : isLoading
+                  ? 'Visualization in progress...'
+                  : 'Replay on current data'
+              }
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={onExport}
+            className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+            title="Export as JSON"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-            />
-          </svg>
-        </button>
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
       <div className="p-2 space-y-2">
         <CollapsibleSection title="SQL Query">
@@ -117,7 +160,7 @@ function SnapshotViewer({ snapshot, index, onExport }: SnapshotViewerProps) {
   );
 }
 
-export function LogPanel({ snapshots, onClearHistory }: LogPanelProps) {
+export function LogPanel({ snapshots, onClearHistory, onReplay, canReplay = false, isLoading = false }: LogPanelProps) {
   const handleExportSnapshot = (snapshot: LogSnapshot) => {
     const exportData = {
       id: snapshot.id,
@@ -221,6 +264,13 @@ export function LogPanel({ snapshots, onClearHistory }: LogPanelProps) {
                 snapshot={snapshot}
                 index={snapshots.length - 1 - idx}
                 onExport={() => handleExportSnapshot(snapshot)}
+                onReplay={
+                  onReplay && snapshot.finalCode
+                    ? () => onReplay(snapshot.finalCode!, snapshot.userPrompt)
+                    : undefined
+                }
+                canReplay={canReplay}
+                isLoading={isLoading}
               />
             ))}
           </div>

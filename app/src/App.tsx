@@ -21,6 +21,7 @@ function App() {
   } | null>(null);
   const [logSnapshots, setLogSnapshots] = useState<LogSnapshot[]>([]);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [pendingReplay, setPendingReplay] = useState<{ code: string; prompt: string } | null>(null);
 
   const {
     isReady: sqliteReady,
@@ -36,6 +37,7 @@ function App() {
     result: visualizeResult,
     progress: visualizeProgress,
     generateVisualization,
+    replayVisualization,
     cancelVisualization,
     clearResult,
   } = useVisualize();
@@ -90,12 +92,21 @@ function App() {
 
   // Create a snapshot when visualization completes or errors
   useEffect(() => {
-    if (pendingPrompt && (visualizeResult || visualizeError) && !visualizeLoading) {
+    const hasPending = pendingPrompt || pendingReplay;
+    if (hasPending && (visualizeResult || visualizeError) && !visualizeLoading) {
+      const isReplay = !!pendingReplay;
+      const promptText = pendingReplay?.prompt || pendingPrompt || '';
+
+      // For replay, add indicator to prompt
+      const displayPrompt = isReplay
+        ? `[Replay${visualizeResult?.wasFixed ? ' - Fixed' : ''}] ${promptText}`
+        : promptText;
+
       const snapshot: LogSnapshot = {
         id: crypto.randomUUID().slice(0, 8),
         timestamp: new Date(),
         sqlQuery: sqlQueryRef.current,
-        userPrompt: pendingPrompt,
+        userPrompt: displayPrompt,
         agentLog: visualizeResult?.agentLog || null,
         finalCode: visualizeResult?.code || null,
         success: !!visualizeResult && !visualizeError,
@@ -103,8 +114,32 @@ function App() {
       };
       setLogSnapshots((prev) => [...prev, snapshot]);
       setPendingPrompt(null);
+      setPendingReplay(null);
     }
-  }, [visualizeResult, visualizeError, visualizeLoading, pendingPrompt]);
+  }, [visualizeResult, visualizeError, visualizeLoading, pendingPrompt, pendingReplay]);
+
+  const handleReplay = useCallback(
+    (code: string, originalPrompt: string) => {
+      // Get current query result data as JSON
+      if (!queryResult || queryResult.values.length === 0) {
+        return;
+      }
+
+      // Convert query result to array of objects
+      const data = queryResult.values.map((row) => {
+        const obj: Record<string, unknown> = {};
+        queryResult.columns.forEach((col, idx) => {
+          obj[col] = row[idx];
+        });
+        return obj;
+      });
+
+      // Store the replay info for snapshot creation
+      setPendingReplay({ code, prompt: originalPrompt });
+      replayVisualization(data, code, originalPrompt);
+    },
+    [queryResult, replayVisualization]
+  );
 
   const handleClear = useCallback(() => {
     setRawData([]);
@@ -127,6 +162,9 @@ function App() {
         <LogPanel
           snapshots={logSnapshots}
           onClearHistory={handleClearHistory}
+          onReplay={handleReplay}
+          canReplay={!!hasQueryResult}
+          isLoading={visualizeLoading}
         />
       }
     >

@@ -23,6 +23,7 @@ from .models import (
     ConfigStatusResponse,
     ErrorResponse,
     HealthResponse,
+    ReplayRequest,
     VisualizeRequest,
     VisualizeResponse,
 )
@@ -406,6 +407,335 @@ async def visualize_stream(request: VisualizeRequest):
     """
     return StreamingResponse(
         visualize_stream_generator(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+REPLAY_FIX_SYSTEM_PROMPT = """You are a data visualization assistant helping to adapt existing visualization code to work with new data.
+
+IMPORTANT CONSTRAINTS:
+1. You cannot see raw data rows - only aggregate statistics via the provided tools.
+2. You can use the following tools:
+   - get_schema: Get the masked column names and their data types
+   - query_stat: Get a differentially private aggregate statistic (mean, max, min, count, sum)
+   - get_histogram: Get a differentially private histogram for a column
+
+3. COLUMN NAME MAPPING:
+   - The user's message includes a "Column Mapping" section that shows how their column names map to masked IDs
+   - Use the MASKED names when calling tools like query_stat and get_histogram
+   - In your generated code, use the ORIGINAL column names (the user's names), NOT the masked names
+
+4. Your task is to fix the provided visualization code so it works with the new data structure.
+   - First, use get_schema to understand the available columns in the new data
+   - Compare with the original code to identify mismatches
+   - Adapt the code to work with the available columns
+   - The code will have access to a DataFrame called `df` with the ORIGINAL column names
+
+5. Your generated code should:
+   - Use matplotlib.pyplot (already imported as plt)
+   - Work with a DataFrame called `df` using ORIGINAL column names
+   - Create clear, informative visualizations with proper labels
+   - NOT call plt.show() - the system will save the figure automatically
+
+OUTPUT FORMAT:
+After analyzing the schema and understanding the issue, output your fixed Python code in a code block:
+```python
+# Your fixed visualization code here
+```
+
+Only include the visualization code, not data loading or saving."""
+
+
+async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str, None]:
+    """Generate SSE events for replay with optional code fixing.
+
+    Events:
+    - status: Progress updates
+    - result: Final success result with image, code, and agent_log
+    - error: Error message if replay fails
+    """
+    api_key = request.api_key or get_server_api_key()
+
+    if not api_key:
+        yield format_sse_event("error", {"message": "No API key provided"})
+        return
+
+    session_id = str(uuid.uuid4())[:8]
+
+    try:
+        yield format_sse_event("status", {"stage": "initializing", "message": "Setting up replay session"})
+
+        df = pd.DataFrame(request.data)
+        if df.empty:
+            yield format_sse_event("error", {"message": "Data cannot be empty"})
+            return
+
+        # Create MCP server for this session (needed for column mapping and potential fixes)
+        mcp_server = MCPServer(
+            df=df,
+            session_id=session_id,
+            total_budget=request.total_budget,
+        )
+        column_mapping = mcp_server.get_column_mapping()
+
+        # First, try to execute the code directly
+        yield format_sse_event("status", {"stage": "executing", "message": "Executing saved code on new data"})
+
+        sandbox = Sandbox(SandboxConfig(timeout_seconds=30))
+
+        # Validate the code first
+        is_valid, validation_error = validate_code(request.code)
+        if not is_valid:
+            yield format_sse_event("status", {
+                "stage": "retrying",
+                "message": f"Code validation failed: {validation_error}. Launching agent to fix...",
+            })
+        else:
+            # Try to execute directly
+            sandbox_result = sandbox.execute(
+                code=request.code,
+                data=request.data,
+                column_mapping=column_mapping,
+            )
+
+            if sandbox_result.success:
+                # Direct execution succeeded - no agent needed
+                yield format_sse_event("result", {
+                    "image": sandbox_result.image_base64,
+                    "code": request.code,
+                    "agent_log": None,
+                    "was_fixed": False,
+                })
+                return
+
+            # Execution failed - need to fix with agent
+            yield format_sse_event("status", {
+                "stage": "retrying",
+                "message": f"Execution failed: {sandbox_result.error}. Launching agent to fix...",
+            })
+            validation_error = f"{sandbox_result.error}"
+            if sandbox_result.stderr:
+                validation_error += f"\nStderr: {sandbox_result.stderr}"
+
+        # Launch agent to fix the code
+        yield format_sse_event("status", {"stage": "generating", "message": "Agent analyzing new data structure"})
+
+        config = AgentConfig()
+        agent = Agent(
+            mcp_server=mcp_server,
+            config=config,
+            api_key=api_key,
+        )
+
+        # Get schema context for prompt augmentation
+        schema_context = mcp_server.get_schema_with_original_names()
+
+        # Build the fix prompt
+        fix_prompt = f"""The following visualization code failed to execute on new data:
+
+```python
+{request.code}
+```
+
+Error encountered:
+{validation_error}
+
+Original visualization request: "{request.original_prompt}"
+
+Please analyze the new data structure using the available tools and fix the code to work with the current data.
+The visualization should still accomplish the original goal: {request.original_prompt}"""
+
+        # Use the replay fix system prompt
+        agent._client = agent._client  # Keep client
+        original_generate = agent.generate_visualization_code
+
+        def generate_with_fix_prompt(prompt: str, schema_ctx=None):
+            """Generate with the fix system prompt."""
+            from anthropic import Anthropic
+            tools = agent._build_anthropic_tools()
+            augmented_prompt = agent._augment_prompt_with_schema(prompt, schema_ctx)
+            messages = [{"role": "user", "content": augmented_prompt}]
+            tool_calls_made = []
+            num_iterations = 0
+
+            while num_iterations < agent.config.max_tool_calls:
+                num_iterations += 1
+                try:
+                    response = agent._client.messages.create(
+                        model=agent.config.model,
+                        max_tokens=agent.config.max_tokens,
+                        temperature=agent.config.temperature,
+                        system=REPLAY_FIX_SYSTEM_PROMPT,
+                        tools=tools,
+                        messages=messages,
+                    )
+                except Exception as e:
+                    from .agent import AgentResult
+                    return AgentResult(
+                        success=False,
+                        error=f"API error: {str(e)}",
+                        tool_calls=tool_calls_made,
+                        messages=messages,
+                    )
+
+                if response.stop_reason == "tool_use":
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use":
+                            result = agent.mcp_server.call_tool(block.name, block.input)
+                            tool_calls_made.append({
+                                "tool": block.name,
+                                "input": block.input,
+                                "result": result.data if result.success else result.error,
+                            })
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": str(result.data) if result.success else f"Error: {result.error}",
+                            })
+                    messages.append({"role": "assistant", "content": response.content})
+                    messages.append({"role": "user", "content": tool_results})
+                else:
+                    messages.append({"role": "assistant", "content": response.content})
+                    code = agent._extract_code(response)
+                    from .agent import AgentResult
+                    if code:
+                        return AgentResult(
+                            success=True,
+                            code=code,
+                            tool_calls=tool_calls_made,
+                            messages=messages,
+                        )
+                    else:
+                        text_response = agent._extract_text(response)
+                        return AgentResult(
+                            success=False,
+                            error=f"No code block found. Response: {text_response[:500] if text_response else 'Empty'}",
+                            tool_calls=tool_calls_made,
+                            messages=messages,
+                        )
+
+            from .agent import AgentResult
+            return AgentResult(
+                success=False,
+                error=f"Max tool calls ({agent.config.max_tool_calls}) exceeded",
+                tool_calls=tool_calls_made,
+                messages=messages,
+            )
+
+        result = generate_with_fix_prompt(fix_prompt, schema_context)
+
+        if not result.success:
+            yield format_sse_event("error", {"message": f"Failed to fix code: {result.error}"})
+            return
+
+        # Execute the fixed code with retry loop
+        current_code = result.code
+        current_result = result
+        last_error = None
+
+        for attempt in range(config.max_execution_retries + 1):
+            yield format_sse_event("status", {
+                "stage": "validating",
+                "message": f"Validating fixed code (attempt {attempt + 1}/{config.max_execution_retries + 1})",
+                "attempt": attempt + 1,
+            })
+
+            is_valid, validation_error = validate_code(current_code)
+            if not is_valid:
+                if attempt < config.max_execution_retries:
+                    yield format_sse_event("status", {
+                        "stage": "retrying",
+                        "message": f"Validation failed, refining: {validation_error}",
+                        "attempt": attempt + 1,
+                    })
+                    current_result = agent.refine_code(
+                        current_result,
+                        f"Code validation failed: {validation_error}",
+                    )
+                    if not current_result.success:
+                        yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
+                        return
+                    current_code = current_result.code
+                    continue
+                else:
+                    yield format_sse_event("error", {
+                        "message": f"Validation failed after {config.max_execution_retries} retries: {validation_error}"
+                    })
+                    return
+
+            yield format_sse_event("status", {
+                "stage": "executing",
+                "message": f"Executing fixed code (attempt {attempt + 1}/{config.max_execution_retries + 1})",
+                "attempt": attempt + 1,
+            })
+
+            sandbox_result = sandbox.execute(
+                code=current_code,
+                data=request.data,
+                column_mapping=column_mapping,
+            )
+
+            if sandbox_result.success:
+                agent_log = _serialize_agent_log(current_result)
+                yield format_sse_event("result", {
+                    "image": sandbox_result.image_base64,
+                    "code": current_code,
+                    "agent_log": agent_log,
+                    "was_fixed": True,
+                })
+                return
+
+            last_error = f"{sandbox_result.error}"
+            if sandbox_result.stderr:
+                last_error += f" | Stderr: {sandbox_result.stderr}"
+
+            if attempt < config.max_execution_retries:
+                yield format_sse_event("status", {
+                    "stage": "retrying",
+                    "message": f"Execution failed, refining: {sandbox_result.error}",
+                    "attempt": attempt + 1,
+                })
+                current_result = agent.refine_code(
+                    current_result,
+                    sandbox_result.error,
+                    sandbox_result.stderr,
+                )
+                if not current_result.success:
+                    yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
+                    return
+                current_code = current_result.code
+
+        yield format_sse_event("error", {
+            "message": f"Replay failed after {config.max_execution_retries} retries. Last error: {last_error}"
+        })
+
+    except AgentError as e:
+        yield format_sse_event("error", {"message": str(e)})
+    except Exception as e:
+        yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
+
+
+@app.post("/visualize/replay")
+async def visualize_replay(request: ReplayRequest):
+    """Replay saved visualization code on new data with automatic fixing.
+
+    This endpoint:
+    1. First tries to execute the provided code directly on new data
+    2. If execution fails, launches an agent to fix the code
+    3. The agent only sees data through privacy-preserving MCP tools
+
+    Events:
+    - status: {"stage": "...", "message": "...", "attempt": N}
+    - result: {"image": "base64...", "code": "...", "agent_log": {...}, "was_fixed": bool}
+    - error: {"message": "..."}
+    """
+    return StreamingResponse(
+        replay_stream_generator(request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

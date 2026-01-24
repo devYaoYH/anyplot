@@ -121,8 +121,20 @@ export interface ResultEventData {
   agent_log?: AgentLog;
 }
 
+export interface ReplayResultEventData extends ResultEventData {
+  was_fixed: boolean;
+}
+
 export interface ErrorEventData {
   message: string;
+}
+
+export interface ReplayRequest {
+  data: Record<string, unknown>[];
+  code: string;
+  original_prompt: string;
+  total_budget?: number;
+  api_key?: string;
 }
 
 export type StreamCallback = (event: StreamEvent) => void;
@@ -181,6 +193,75 @@ export async function visualizeStream(
         try {
           const data = JSON.parse(currentData);
           onEvent({ event: currentEvent as StreamEvent['event'], data });
+        } catch {
+          console.error('Failed to parse SSE data:', currentData);
+        }
+        currentEvent = null;
+        currentData = null;
+      }
+    }
+  }
+}
+
+export interface ReplayStreamEvent {
+  event: 'status' | 'result' | 'error';
+  data: StatusEventData | ReplayResultEventData | ErrorEventData;
+}
+
+export type ReplayStreamCallback = (event: ReplayStreamEvent) => void;
+
+export async function replayStream(
+  request: ReplayRequest,
+  onEvent: ReplayStreamCallback,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/visualize/replay`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError(
+      `Replay stream failed: ${error.detail}`,
+      response.status,
+      error.detail
+    );
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ApiError('No response body', 500);
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let currentEvent: string | null = null;
+    let currentData: string | null = null;
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        currentData = line.slice(6).trim();
+      } else if (line === '' && currentEvent && currentData) {
+        try {
+          const data = JSON.parse(currentData);
+          onEvent({ event: currentEvent as ReplayStreamEvent['event'], data });
         } catch {
           console.error('Failed to parse SSE data:', currentData);
         }
