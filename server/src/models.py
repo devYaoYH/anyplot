@@ -65,6 +65,33 @@ class ReplayRequest(BaseModel):
     )
 
 
+class ContinueRequest(BaseModel):
+    """Request model for the /visualize/continue endpoint."""
+
+    data: list[dict[str, Any]] = Field(
+        ..., description="Array of data rows as JSON objects"
+    )
+    prompt: str = Field(
+        ..., description="User's adjustment request"
+    )
+    previous_messages: list[dict[str, Any]] = Field(
+        ..., description="Previous conversation messages from agent result"
+    )
+    previous_tool_calls: list[dict[str, Any]] = Field(
+        default_factory=list, description="Previous tool calls from agent result"
+    )
+    total_budget: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=100.0,
+        description="Total privacy budget for the session",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="Optional Anthropic API key (uses server default if not provided)",
+    )
+
+
 class HealthResponse(BaseModel):
     """Response model for the /health endpoint."""
 

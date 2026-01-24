@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from 'react';
 import {
   visualizeStream,
   replayStream,
+  continueStream,
   ApiError,
   getApiKey,
 } from '../lib/api';
@@ -19,6 +20,7 @@ import type {
   ReplayResultEventData,
   ErrorEventData,
   AgentLog,
+  ToolCallLog,
 } from '../lib/api';
 
 export interface ProgressStatus {
@@ -32,15 +34,25 @@ export interface VisualizeResult extends VisualizeResponse {
   wasFixed?: boolean;
 }
 
+export interface SessionState {
+  messages: unknown[];
+  toolCalls: ToolCallLog[];
+  originalPrompt: string;
+}
+
 export interface UseVisualizeReturn {
   isLoading: boolean;
   error: string | null;
   result: VisualizeResult | null;
   progress: ProgressStatus | null;
+  session: SessionState | null;
+  hasActiveSession: boolean;
   generateVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
+  continueVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
   replayVisualization: (data: Record<string, unknown>[], code: string, originalPrompt: string) => Promise<void>;
   cancelVisualization: () => void;
   clearResult: () => void;
+  clearSession: () => void;
 }
 
 export function useVisualize(): UseVisualizeReturn {
@@ -48,6 +60,7 @@ export function useVisualize(): UseVisualizeReturn {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VisualizeResult | null>(null);
   const [progress, setProgress] = useState<ProgressStatus | null>(null);
+  const [session, setSession] = useState<SessionState | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const generateVisualization = useCallback(
@@ -73,12 +86,16 @@ export function useVisualize(): UseVisualizeReturn {
       setError(null);
       setResult(null);
       setProgress(null);
+      // Clear session when starting a new visualization
+      setSession(null);
+
+      const promptTrimmed = prompt.trim();
 
       try {
         const apiKey = getApiKey();
         const request: VisualizeRequest = {
           data,
-          prompt: prompt.trim(),
+          prompt: promptTrimmed,
           ...(apiKey && { api_key: apiKey }),
         };
 
@@ -102,6 +119,14 @@ export function useVisualize(): UseVisualizeReturn {
                   code: resultData.code,
                   agentLog: resultData.agent_log,
                 });
+                // Save session state for continuation
+                if (resultData.agent_log) {
+                  setSession({
+                    messages: resultData.agent_log.messages,
+                    toolCalls: resultData.agent_log.tool_calls,
+                    originalPrompt: promptTrimmed,
+                  });
+                }
                 setProgress(null);
                 break;
               }
@@ -219,6 +244,103 @@ export function useVisualize(): UseVisualizeReturn {
     []
   );
 
+  const continueVisualization = useCallback(
+    async (data: Record<string, unknown>[], prompt: string) => {
+      if (data.length === 0) {
+        setError('No data to visualize');
+        return;
+      }
+
+      if (!prompt.trim()) {
+        setError('Please enter an adjustment request');
+        return;
+      }
+
+      if (!session) {
+        setError('No active session to continue');
+        return;
+      }
+
+      // Cancel any existing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      abortControllerRef.current = new AbortController();
+
+      setIsLoading(true);
+      setError(null);
+      setProgress(null);
+
+      try {
+        const apiKey = getApiKey();
+        const request = {
+          data,
+          prompt: prompt.trim(),
+          previous_messages: session.messages,
+          previous_tool_calls: session.toolCalls,
+          ...(apiKey && { api_key: apiKey }),
+        };
+
+        await continueStream(
+          request,
+          (event: StreamEvent) => {
+            switch (event.event) {
+              case 'status': {
+                const statusData = event.data as StatusEventData;
+                setProgress({
+                  stage: statusData.stage,
+                  message: statusData.message,
+                  attempt: statusData.attempt,
+                });
+                break;
+              }
+              case 'result': {
+                const resultData = event.data as ResultEventData;
+                setResult({
+                  image: resultData.image,
+                  code: resultData.code,
+                  agentLog: resultData.agent_log,
+                });
+                // Update session state with new messages
+                if (resultData.agent_log) {
+                  setSession((prev) => prev ? {
+                    ...prev,
+                    messages: resultData.agent_log!.messages,
+                    toolCalls: resultData.agent_log!.tool_calls,
+                  } : null);
+                }
+                setProgress(null);
+                break;
+              }
+              case 'error': {
+                const errorData = event.data as ErrorEventData;
+                setError(errorData.message);
+                setProgress(null);
+                break;
+              }
+            }
+          },
+          abortControllerRef.current.signal
+        );
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return;
+        }
+        if (err instanceof ApiError) {
+          setError(err.detail || err.message);
+        } else {
+          setError(`Unexpected error: ${err}`);
+        }
+      } finally {
+        setIsLoading(false);
+        setProgress(null);
+        abortControllerRef.current = null;
+      }
+    },
+    [session]
+  );
+
   const cancelVisualization = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -234,14 +356,22 @@ export function useVisualize(): UseVisualizeReturn {
     setProgress(null);
   }, []);
 
+  const clearSession = useCallback(() => {
+    setSession(null);
+  }, []);
+
   return {
     isLoading,
     error,
     result,
     progress,
+    session,
+    hasActiveSession: session !== null,
     generateVisualization,
+    continueVisualization,
     replayVisualization,
     cancelVisualization,
     clearResult,
+    clearSession,
   };
 }

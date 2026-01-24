@@ -21,6 +21,7 @@ from sanctum_mcp import MCPServer
 from .agent import Agent, AgentConfig, AgentError
 from .models import (
     ConfigStatusResponse,
+    ContinueRequest,
     ErrorResponse,
     HealthResponse,
     ReplayRequest,
@@ -736,6 +737,176 @@ async def visualize_replay(request: ReplayRequest):
     """
     return StreamingResponse(
         replay_stream_generator(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[str, None]:
+    """Generate SSE events for continuing a visualization conversation.
+
+    Events:
+    - status: Progress updates
+    - result: Final success result with image, code, and agent_log
+    - error: Error message if continuation fails
+    """
+    api_key = request.api_key or get_server_api_key()
+
+    if not api_key:
+        yield format_sse_event("error", {"message": "No API key provided"})
+        return
+
+    session_id = str(uuid.uuid4())[:8]
+
+    try:
+        yield format_sse_event("status", {"stage": "initializing", "message": "Continuing conversation"})
+
+        df = pd.DataFrame(request.data)
+        if df.empty:
+            yield format_sse_event("error", {"message": "Data cannot be empty"})
+            return
+
+        # Create MCP server for this session
+        mcp_server = MCPServer(
+            df=df,
+            session_id=session_id,
+            total_budget=request.total_budget,
+        )
+
+        config = AgentConfig()
+        agent = Agent(
+            mcp_server=mcp_server,
+            config=config,
+            api_key=api_key,
+        )
+
+        # Get schema context for prompt augmentation
+        schema_context = mcp_server.get_schema_with_original_names()
+
+        yield format_sse_event("status", {"stage": "generating", "message": "Processing adjustment request"})
+
+        # Reconstruct previous result from request
+        from .agent import AgentResult
+        previous_result = AgentResult(
+            success=True,
+            code=None,  # Not needed for continuation
+            tool_calls=request.previous_tool_calls,
+            messages=request.previous_messages,
+        )
+
+        # Continue the conversation
+        result = agent.continue_conversation(previous_result, request.prompt, schema_context)
+
+        if not result.success:
+            yield format_sse_event("error", {"message": f"Failed to generate adjusted code: {result.error}"})
+            return
+
+        # Execute the adjusted code with retry loop
+        sandbox = Sandbox(SandboxConfig(timeout_seconds=30))
+        column_mapping = mcp_server.get_column_mapping()
+
+        current_code = result.code
+        current_result = result
+        last_error = None
+
+        for attempt in range(config.max_execution_retries + 1):
+            yield format_sse_event("status", {
+                "stage": "validating",
+                "message": f"Validating adjusted code (attempt {attempt + 1}/{config.max_execution_retries + 1})",
+                "attempt": attempt + 1,
+            })
+
+            is_valid, validation_error = validate_code(current_code)
+            if not is_valid:
+                if attempt < config.max_execution_retries:
+                    yield format_sse_event("status", {
+                        "stage": "retrying",
+                        "message": f"Validation failed, refining: {validation_error}",
+                        "attempt": attempt + 1,
+                    })
+                    current_result = agent.refine_code(
+                        current_result,
+                        f"Code validation failed: {validation_error}",
+                    )
+                    if not current_result.success:
+                        yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
+                        return
+                    current_code = current_result.code
+                    continue
+                else:
+                    yield format_sse_event("error", {
+                        "message": f"Validation failed after {config.max_execution_retries} retries: {validation_error}"
+                    })
+                    return
+
+            yield format_sse_event("status", {
+                "stage": "executing",
+                "message": f"Executing adjusted code (attempt {attempt + 1}/{config.max_execution_retries + 1})",
+                "attempt": attempt + 1,
+            })
+
+            sandbox_result = sandbox.execute(
+                code=current_code,
+                data=request.data,
+                column_mapping=column_mapping,
+            )
+
+            if sandbox_result.success:
+                agent_log = _serialize_agent_log(current_result)
+                yield format_sse_event("result", {
+                    "image": sandbox_result.image_base64,
+                    "code": current_code,
+                    "agent_log": agent_log,
+                })
+                return
+
+            last_error = f"{sandbox_result.error}"
+            if sandbox_result.stderr:
+                last_error += f" | Stderr: {sandbox_result.stderr}"
+
+            if attempt < config.max_execution_retries:
+                yield format_sse_event("status", {
+                    "stage": "retrying",
+                    "message": f"Execution failed, refining: {sandbox_result.error}",
+                    "attempt": attempt + 1,
+                })
+                current_result = agent.refine_code(
+                    current_result,
+                    sandbox_result.error,
+                    sandbox_result.stderr,
+                )
+                if not current_result.success:
+                    yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
+                    return
+                current_code = current_result.code
+
+        yield format_sse_event("error", {
+            "message": f"Continuation failed after {config.max_execution_retries} retries. Last error: {last_error}"
+        })
+
+    except AgentError as e:
+        yield format_sse_event("error", {"message": str(e)})
+    except Exception as e:
+        yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
+
+
+@app.post("/visualize/continue")
+async def visualize_continue(request: ContinueRequest):
+    """Continue a visualization conversation with an adjustment request.
+
+    This endpoint continues from a previous conversation, allowing users
+    to make adjustments to their visualization without starting over.
+
+    Events:
+    - status: {"stage": "...", "message": "...", "attempt": N}
+    - result: {"image": "base64...", "code": "...", "agent_log": {...}}
+    - error: {"message": "..."}
+    """
+    return StreamingResponse(
+        continue_stream_generator(request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

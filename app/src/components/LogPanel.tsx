@@ -34,6 +34,44 @@ interface SnapshotViewerProps {
   isLoading?: boolean;
 }
 
+function PromptDisplay({ prompt }: { prompt: string }) {
+  // Parse the prompt to separate original from adjustments
+  const parts = prompt.split(/\n\n\[Adjustment\]\s*/);
+  const originalPrompt = parts[0];
+  const adjustments = parts.slice(1);
+
+  if (adjustments.length === 0) {
+    return (
+      <p className="text-sm text-gray-700 whitespace-pre-wrap">
+        {originalPrompt}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div>
+        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+          Original
+        </span>
+        <p className="text-sm text-gray-700 whitespace-pre-wrap mt-1">
+          {originalPrompt}
+        </p>
+      </div>
+      {adjustments.map((adjustment, idx) => (
+        <div key={idx} className="pl-3 border-l-2 border-blue-200">
+          <span className="text-xs font-medium text-blue-600 uppercase tracking-wider">
+            Adjustment {idx + 1}
+          </span>
+          <p className="text-sm text-gray-700 whitespace-pre-wrap mt-1">
+            {adjustment}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SnapshotViewer({ snapshot, index, onExport, onReplay, canReplay, isLoading }: SnapshotViewerProps) {
   const formatTime = (date: Date): string => {
     return date.toLocaleTimeString('en-US', {
@@ -128,9 +166,7 @@ function SnapshotViewer({ snapshot, index, onExport, onReplay, canReplay, isLoad
         </CollapsibleSection>
 
         <CollapsibleSection title="User Prompt">
-          <p className="text-sm text-gray-700 whitespace-pre-wrap">
-            {snapshot.userPrompt}
-          </p>
+          <PromptDisplay prompt={snapshot.userPrompt} />
         </CollapsibleSection>
 
         {snapshot.agentLog && (

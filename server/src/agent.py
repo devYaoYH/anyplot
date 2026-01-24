@@ -371,3 +371,124 @@ Provide the corrected code in a ```python code block."""
                 tool_calls=tool_calls_made,
                 messages=messages,
             )
+
+    def continue_conversation(
+        self,
+        previous_result: AgentResult,
+        adjustment_prompt: str,
+        schema_context: list[dict[str, str]] | None = None,
+    ) -> AgentResult:
+        """Continue a conversation with a user adjustment request.
+
+        This method continues the conversation from a previous result,
+        allowing the user to request modifications to the visualization.
+
+        Args:
+            previous_result: The previous AgentResult containing messages and code
+            adjustment_prompt: User's request for adjustment
+            schema_context: Optional schema context for column mapping
+
+        Returns:
+            AgentResult with adjusted code or error
+        """
+        # Augment the adjustment prompt with schema context if provided
+        augmented_prompt = self._augment_prompt_with_schema(adjustment_prompt, schema_context)
+
+        # Build the continuation message
+        continuation_message = f"""The user wants to adjust the visualization:
+
+{augmented_prompt}
+
+Please modify the code to implement this change. You can use the MCP tools if you need additional information about the data.
+
+Remember:
+- The DataFrame is called `df` and has the original (unmasked) column names
+- Use matplotlib.pyplot (imported as plt)
+- Do not call plt.show() - the figure will be saved automatically
+
+Provide the updated code in a ```python code block."""
+
+        # Continue from previous messages
+        messages = list(previous_result.messages)  # Copy to avoid mutation
+        messages.append({"role": "user", "content": continuation_message})
+
+        tool_calls_made = list(previous_result.tool_calls)  # Copy previous tool calls
+        tools = self._build_anthropic_tools()
+
+        num_iterations = 0
+        while num_iterations < self.config.max_tool_calls:
+            num_iterations += 1
+
+            try:
+                response = self._client.messages.create(
+                    model=self.config.model,
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                    system=SYSTEM_PROMPT,
+                    tools=tools,
+                    messages=messages,
+                )
+            except anthropic.APIError as e:
+                return AgentResult(
+                    success=False,
+                    error=f"API error during continuation: {str(e)}",
+                    tool_calls=tool_calls_made,
+                    messages=messages,
+                )
+
+            # Check if we need to process tool calls
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        tool_name = block.name
+                        tool_input = block.input
+
+                        result = self.mcp_server.call_tool(tool_name, tool_input)
+
+                        tool_calls_made.append(
+                            {
+                                "tool": tool_name,
+                                "input": tool_input,
+                                "result": result.data if result.success else result.error,
+                            }
+                        )
+
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": str(result.data) if result.success else f"Error: {result.error}",
+                            }
+                        )
+
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_results})
+
+            else:
+                # Response complete, extract code
+                messages.append({"role": "assistant", "content": response.content})
+
+                code = self._extract_code(response)
+                if code:
+                    return AgentResult(
+                        success=True,
+                        code=code,
+                        tool_calls=tool_calls_made,
+                        messages=messages,
+                    )
+                else:
+                    text_response = self._extract_text(response)
+                    return AgentResult(
+                        success=False,
+                        error=f"No code block found in continuation response. Response: {text_response[:500] if text_response else 'Empty'}",
+                        tool_calls=tool_calls_made,
+                        messages=messages,
+                    )
+
+        return AgentResult(
+            success=False,
+            error=f"Max tool calls ({self.config.max_tool_calls}) exceeded during continuation",
+            tool_calls=tool_calls_made,
+            messages=messages,
+        )

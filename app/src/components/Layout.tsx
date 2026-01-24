@@ -34,7 +34,7 @@ export function Layout({ children, rightPanel, onApiKeyChange }: LayoutProps) {
           </div>
           {rightPanel && (
             <div className="w-80 flex-shrink-0">
-              <div className="sticky top-6 max-h-[calc(100vh-6rem)] overflow-hidden">
+              <div className="sticky top-6 h-[calc(100vh-6rem)]">
                 {rightPanel}
               </div>
             </div>
