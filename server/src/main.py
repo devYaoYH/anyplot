@@ -119,8 +119,11 @@ async def visualize(request: VisualizeRequest):
             api_key=api_key,
         )
 
-        # Generate visualization code
-        result = agent.generate_visualization_code(request.prompt)
+        # Get schema context for prompt augmentation
+        schema_context = mcp_server.get_schema_with_original_names()
+
+        # Generate visualization code with schema context
+        result = agent.generate_visualization_code(request.prompt, schema_context)
 
         if not result.success:
             raise HTTPException(
@@ -210,6 +213,48 @@ def format_sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _serialize_agent_log(result) -> dict:
+    """Serialize agent result logs for the frontend.
+
+    Converts tool calls and messages to a JSON-serializable format.
+    """
+    serialized_messages = []
+    for msg in result.messages:
+        if isinstance(msg.get("content"), list):
+            # Handle structured content (tool use blocks, etc.)
+            content_items = []
+            for item in msg["content"]:
+                if hasattr(item, "type"):
+                    # Anthropic content block
+                    if item.type == "text":
+                        content_items.append({"type": "text", "text": item.text})
+                    elif item.type == "tool_use":
+                        content_items.append({
+                            "type": "tool_use",
+                            "id": item.id,
+                            "name": item.name,
+                            "input": item.input,
+                        })
+                elif isinstance(item, dict):
+                    content_items.append(item)
+                else:
+                    content_items.append(str(item))
+            serialized_messages.append({
+                "role": msg["role"],
+                "content": content_items,
+            })
+        else:
+            serialized_messages.append({
+                "role": msg["role"],
+                "content": msg.get("content"),
+            })
+
+    return {
+        "tool_calls": result.tool_calls,
+        "messages": serialized_messages,
+    }
+
+
 async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerator[str, None]:
     """Generate SSE events for visualization progress.
 
@@ -247,9 +292,12 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
             api_key=api_key,
         )
 
+        # Get schema context for prompt augmentation
+        schema_context = mcp_server.get_schema_with_original_names()
+
         yield format_sse_event("status", {"stage": "generating", "message": "Generating visualization code"})
 
-        result = agent.generate_visualization_code(request.prompt)
+        result = agent.generate_visualization_code(request.prompt, schema_context)
 
         if not result.success:
             yield format_sse_event("error", {"message": f"Failed to generate code: {result.error}"})
@@ -305,9 +353,12 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
             )
 
             if sandbox_result.success:
+                # Serialize agent logs for the frontend
+                agent_log = _serialize_agent_log(current_result)
                 yield format_sse_event("result", {
                     "image": sandbox_result.image_base64,
                     "code": current_code,
+                    "agent_log": agent_log,
                 })
                 return
 

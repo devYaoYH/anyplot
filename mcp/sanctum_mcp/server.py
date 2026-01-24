@@ -139,6 +139,30 @@ class MCPServer:
         """
         return self._session.mapper.get_reverse_mapping()
 
+    def get_original_to_masked_mapping(self) -> dict[str, str]:
+        """Get mapping from original column names to masked names.
+
+        This is used to augment user prompts with column context.
+        """
+        return self._session.mapper.get_forward_mapping()
+
+    def get_schema_with_original_names(self) -> list[dict[str, str]]:
+        """Get schema info including original names for prompt context.
+
+        Returns a list of dicts with original_name, masked_name, and dtype.
+        This should only be used for augmenting user prompts, never sent to the agent.
+        """
+        schema = self._session.schema
+        result = []
+        for masked_name, col_info in schema.items():
+            original_name = self._session.mapper.get_original(masked_name)
+            result.append({
+                "original_name": original_name,
+                "masked_name": masked_name,
+                "dtype": col_info.dtype,
+            })
+        return result
+
     def call_tool(
         self, name: str, arguments: dict[str, Any] | None = None
     ) -> ToolResult:

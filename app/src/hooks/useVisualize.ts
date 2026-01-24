@@ -15,6 +15,7 @@ import type {
   StatusEventData,
   ResultEventData,
   ErrorEventData,
+  AgentLog,
 } from '../lib/api';
 
 export interface ProgressStatus {
@@ -23,10 +24,14 @@ export interface ProgressStatus {
   attempt?: number;
 }
 
+export interface VisualizeResult extends VisualizeResponse {
+  agentLog?: AgentLog;
+}
+
 export interface UseVisualizeReturn {
   isLoading: boolean;
   error: string | null;
-  result: VisualizeResponse | null;
+  result: VisualizeResult | null;
   progress: ProgressStatus | null;
   generateVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
   cancelVisualization: () => void;
@@ -36,7 +41,7 @@ export interface UseVisualizeReturn {
 export function useVisualize(): UseVisualizeReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<VisualizeResponse | null>(null);
+  const [result, setResult] = useState<VisualizeResult | null>(null);
   const [progress, setProgress] = useState<ProgressStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -90,6 +95,7 @@ export function useVisualize(): UseVisualizeReturn {
                 setResult({
                   image: resultData.image,
                   code: resultData.code,
+                  agentLog: resultData.agent_log,
                 });
                 setProgress(null);
                 break;

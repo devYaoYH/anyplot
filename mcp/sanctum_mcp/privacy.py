@@ -68,6 +68,10 @@ class SchemaMapper:
         """Get mapping from masked names to original names."""
         return dict(self._masked_to_original)
 
+    def get_forward_mapping(self) -> dict[str, str]:
+        """Get mapping from original names to masked names."""
+        return dict(self._original_to_masked)
+
 
 def extract_masked_schema(
     df: pd.DataFrame, salt: str | None = None

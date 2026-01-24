@@ -2,12 +2,13 @@
  * Main application component for Sanctum.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Layout } from './components/Layout';
 import { DataUploader } from './components/DataUploader';
 import { SqlEditor } from './components/SqlEditor';
 import { DataGrid } from './components/DataGrid';
 import { VisualizationPanel } from './components/VisualizationPanel';
+import { LogPanel, type LogSnapshot } from './components/LogPanel';
 import { useSqlite } from './hooks/useSqlite';
 import { useVisualize } from './hooks/useVisualize';
 
@@ -18,6 +19,8 @@ function App() {
     columns: string[];
     values: unknown[][];
   } | null>(null);
+  const [logSnapshots, setLogSnapshots] = useState<LogSnapshot[]>([]);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
   const {
     isReady: sqliteReady,
@@ -59,6 +62,9 @@ function App() {
     }
   }, [runQuery, sqlQuery]);
 
+  const sqlQueryRef = useRef(sqlQuery);
+  sqlQueryRef.current = sqlQuery;
+
   const handleVisualize = useCallback(
     (prompt: string) => {
       // Get current query result data as JSON
@@ -75,10 +81,30 @@ function App() {
         return obj;
       });
 
+      // Store the prompt for snapshot creation
+      setPendingPrompt(prompt);
       generateVisualization(data, prompt);
     },
     [queryResult, generateVisualization]
   );
+
+  // Create a snapshot when visualization completes or errors
+  useEffect(() => {
+    if (pendingPrompt && (visualizeResult || visualizeError) && !visualizeLoading) {
+      const snapshot: LogSnapshot = {
+        id: crypto.randomUUID().slice(0, 8),
+        timestamp: new Date(),
+        sqlQuery: sqlQueryRef.current,
+        userPrompt: pendingPrompt,
+        agentLog: visualizeResult?.agentLog || null,
+        finalCode: visualizeResult?.code || null,
+        success: !!visualizeResult && !visualizeError,
+        error: visualizeError,
+      };
+      setLogSnapshots((prev) => [...prev, snapshot]);
+      setPendingPrompt(null);
+    }
+  }, [visualizeResult, visualizeError, visualizeLoading, pendingPrompt]);
 
   const handleClear = useCallback(() => {
     setRawData([]);
@@ -88,11 +114,22 @@ function App() {
     setSqlQuery('SELECT * FROM data LIMIT 100');
   }, [clearDatabase, clearResult]);
 
+  const handleClearHistory = useCallback(() => {
+    setLogSnapshots([]);
+  }, []);
+
   const hasData = rawData.length > 0;
   const hasQueryResult = queryResult && queryResult.values.length > 0;
 
   return (
-    <Layout>
+    <Layout
+      rightPanel={
+        <LogPanel
+          snapshots={logSnapshots}
+          onClearHistory={handleClearHistory}
+        />
+      }
+    >
       <div className="space-y-6">
         {/* Data Upload Section */}
         <section className="bg-white rounded-lg shadow p-6">

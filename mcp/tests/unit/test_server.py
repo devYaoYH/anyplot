@@ -64,6 +64,38 @@ class TestMCPServerSetup:
         assert "age" in mapping.values()
         assert "department" in mapping.values()
 
+    def test_get_original_to_masked_mapping(self, sample_df):
+        """get_original_to_masked_mapping should return original to masked mapping."""
+        server = MCPServer(df=sample_df, salt="test")
+        mapping = server.get_original_to_masked_mapping()
+
+        assert len(mapping) == 3
+        assert "salary" in mapping.keys()
+        assert "age" in mapping.keys()
+        assert "department" in mapping.keys()
+        # All values should be masked names
+        for masked_name in mapping.values():
+            assert masked_name.startswith("col_")
+
+    def test_get_schema_with_original_names(self, sample_df):
+        """get_schema_with_original_names should return full schema info."""
+        server = MCPServer(df=sample_df, salt="test")
+        schema_info = server.get_schema_with_original_names()
+
+        assert len(schema_info) == 3
+        # Check structure
+        for col_info in schema_info:
+            assert "original_name" in col_info
+            assert "masked_name" in col_info
+            assert "dtype" in col_info
+            assert col_info["masked_name"].startswith("col_")
+
+        # Check that original names are present
+        original_names = [c["original_name"] for c in schema_info]
+        assert "salary" in original_names
+        assert "age" in original_names
+        assert "department" in original_names
+
 
 class TestGetSchemaTool:
     """Tests for the get_schema tool."""

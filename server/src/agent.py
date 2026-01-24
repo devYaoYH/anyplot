@@ -46,21 +46,23 @@ IMPORTANT CONSTRAINTS:
    - query_stat: Get a differentially private aggregate statistic (mean, max, min, count, sum)
    - get_histogram: Get a differentially private histogram for a column
 
-3. When generating visualizations:
-   - First call get_schema to understand the data structure
-   - Use query_stat or get_histogram to gather statistics needed for visualization
+3. COLUMN NAME MAPPING:
+   - The user's message includes a "Column Mapping" section that shows how their column names map to masked IDs
+   - When the user refers to a column (e.g., "sales"), find its corresponding masked name (e.g., "col_abc123") in the mapping
+   - Use the MASKED names when calling tools like query_stat and get_histogram
+   - In your generated code, use the ORIGINAL column names (the user's names), NOT the masked names
+
+4. When generating visualizations:
+   - Use the column mapping to understand which masked column corresponds to which user concept
+   - Use query_stat or get_histogram with the MASKED column names to gather statistics
    - Generate Python code using matplotlib that creates the visualization
-   - The code will have access to a DataFrame called `df` with the ORIGINAL column names (not masked)
+   - The code will have access to a DataFrame called `df` with the ORIGINAL column names
 
-4. Your generated code should:
+5. Your generated code should:
    - Use matplotlib.pyplot (already imported as plt)
-   - Work with a DataFrame called `df` that contains the real data
-   - Create clear, informative visualizations
+   - Work with a DataFrame called `df` using ORIGINAL column names (e.g., df['sales'], NOT df['col_abc123'])
+   - Create clear, informative visualizations with proper labels using the original column names
    - NOT call plt.show() - the system will save the figure automatically
-
-5. When interpreting masked column names:
-   - Use the dtype to understand what kind of data the column contains
-   - Use query_stat to understand the data distribution before plotting
 
 OUTPUT FORMAT:
 After gathering information, output your Python code in a code block like this:
@@ -107,11 +109,17 @@ class Agent:
         self.mcp_server = mcp_server
         self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
-    def generate_visualization_code(self, prompt: str) -> AgentResult:
+    def generate_visualization_code(
+        self,
+        prompt: str,
+        schema_context: list[dict[str, str]] | None = None,
+    ) -> AgentResult:
         """Generate visualization code based on user prompt.
 
         Args:
             prompt: User's description of the desired visualization
+            schema_context: Optional list of column info dicts with original_name,
+                          masked_name, and dtype for augmenting the prompt
 
         Returns:
             AgentResult with generated code or error
@@ -119,8 +127,11 @@ class Agent:
         # Build tools from MCP server
         tools = self._build_anthropic_tools()
 
+        # Augment prompt with column mapping if provided
+        augmented_prompt = self._augment_prompt_with_schema(prompt, schema_context)
+
         # Start conversation
-        messages = [{"role": "user", "content": prompt}]
+        messages = [{"role": "user", "content": augmented_prompt}]
 
         tool_calls_made = []
         num_iterations = 0
@@ -242,6 +253,42 @@ class Agent:
             if block.type == "text":
                 texts.append(block.text)
         return "\n".join(texts) if texts else None
+
+    def _augment_prompt_with_schema(
+        self,
+        prompt: str,
+        schema_context: list[dict[str, str]] | None,
+    ) -> str:
+        """Augment user prompt with column mapping context.
+
+        Args:
+            prompt: Original user prompt
+            schema_context: List of dicts with original_name, masked_name, dtype
+
+        Returns:
+            Augmented prompt with column mapping information
+        """
+        if not schema_context:
+            return prompt
+
+        # Build column mapping section
+        mapping_lines = []
+        for col in schema_context:
+            original = col.get("original_name", "unknown")
+            masked = col.get("masked_name", "unknown")
+            dtype = col.get("dtype", "unknown")
+            mapping_lines.append(f"  - \"{original}\" → {masked} (type: {dtype})")
+
+        column_mapping_text = "\n".join(mapping_lines)
+
+        augmented = f"""{prompt}
+
+---
+COLUMN MAPPING (use masked names for tool calls, original names in generated code):
+{column_mapping_text}
+---"""
+
+        return augmented
 
     def refine_code(
         self,

@@ -99,9 +99,26 @@ export interface StatusEventData {
   attempt?: number;
 }
 
+export interface ToolCallLog {
+  tool: string;
+  input: Record<string, unknown>;
+  result: unknown;
+}
+
+export interface MessageLog {
+  role: 'user' | 'assistant';
+  content: unknown;
+}
+
+export interface AgentLog {
+  tool_calls: ToolCallLog[];
+  messages: MessageLog[];
+}
+
 export interface ResultEventData {
   image: string;
   code: string;
+  agent_log?: AgentLog;
 }
 
 export interface ErrorEventData {
