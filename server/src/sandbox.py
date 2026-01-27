@@ -15,6 +15,7 @@ Security features:
 from __future__ import annotations
 
 import base64
+import json
 import os
 import shutil
 import subprocess
@@ -24,7 +25,7 @@ import textwrap
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 class SandboxError(Exception):
@@ -52,6 +53,8 @@ class SandboxResult:
     success: bool
     image_bytes: bytes | None = None
     image_base64: str | None = None
+    vega_spec: dict | None = None
+    viz_type: str = "image"  # "image" or "vega_lite"
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
@@ -80,6 +83,7 @@ class Sandbox:
         "numpy",
         "matplotlib",
         "seaborn",
+        "altair",
     ]
 
     def __init__(self, config: SandboxConfig | None = None):
@@ -95,6 +99,7 @@ class Sandbox:
         code: str,
         data: list[dict[str, Any]],
         column_mapping: dict[str, str],
+        viz_mode: Literal["matplotlib", "altair"] = "matplotlib",
     ) -> SandboxResult:
         """Execute code in the sandbox.
 
@@ -102,6 +107,8 @@ class Sandbox:
             code: Python code to execute (from agent)
             data: Data rows as list of dicts
             column_mapping: Mapping from masked names to original names
+            viz_mode: Visualization mode - "matplotlib" for static images,
+                     "altair" for Vega-Lite JSON specs
 
         Returns:
             SandboxResult with execution results
@@ -124,6 +131,7 @@ class Sandbox:
                 data=data,
                 column_mapping=column_mapping,
                 session_dir=session_dir,
+                viz_mode=viz_mode,
             )
         finally:
             # Clean up temp files
@@ -135,17 +143,19 @@ class Sandbox:
         data: list[dict[str, Any]],
         column_mapping: dict[str, str],
         session_dir: Path,
+        viz_mode: Literal["matplotlib", "altair"] = "matplotlib",
     ) -> SandboxResult:
         """Execute code in a subprocess."""
         # Generate the full script with prelude
-        full_script = self._generate_script(code, data, column_mapping, session_dir)
+        full_script = self._generate_script(code, data, column_mapping, session_dir, viz_mode)
 
         # Write script to temp file
         script_path = session_dir / "script.py"
         script_path.write_text(full_script)
 
-        # Output image path
-        output_path = session_dir / "output.png"
+        # Output paths
+        image_output_path = session_dir / "output.png"
+        json_output_path = session_dir / "output.json"
 
         # Build restricted environment
         env = self._build_restricted_env()
@@ -161,13 +171,6 @@ class Sandbox:
                 cwd=str(session_dir),
             )
 
-            # Check if image was produced
-            image_bytes = None
-            image_base64 = None
-            if output_path.exists():
-                image_bytes = output_path.read_bytes()
-                image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-
             if result.returncode != 0:
                 return SandboxResult(
                     success=False,
@@ -176,21 +179,53 @@ class Sandbox:
                     error=f"Code execution failed with exit code {result.returncode}",
                 )
 
-            if image_bytes is None:
+            # Check for Altair/Vega-Lite output first (for altair mode)
+            if viz_mode == "altair" and json_output_path.exists():
+                try:
+                    vega_spec = json.loads(json_output_path.read_text())
+                    return SandboxResult(
+                        success=True,
+                        vega_spec=vega_spec,
+                        viz_type="vega_lite",
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                    )
+                except json.JSONDecodeError as e:
+                    return SandboxResult(
+                        success=False,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                        error=f"Failed to parse Vega-Lite JSON: {str(e)}",
+                    )
+
+            # Check for matplotlib image output
+            if image_output_path.exists():
+                image_bytes = image_output_path.read_bytes()
+                image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                return SandboxResult(
+                    success=True,
+                    image_bytes=image_bytes,
+                    image_base64=image_base64,
+                    viz_type="image",
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                )
+
+            # No output produced
+            if viz_mode == "altair":
+                return SandboxResult(
+                    success=False,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    error="No Vega-Lite spec was produced. Make sure to call save_chart(chart)",
+                )
+            else:
                 return SandboxResult(
                     success=False,
                     stdout=result.stdout,
                     stderr=result.stderr,
                     error="No image was produced. Make sure to call plt.savefig('output.png')",
                 )
-
-            return SandboxResult(
-                success=True,
-                image_bytes=image_bytes,
-                image_base64=image_base64,
-                stdout=result.stdout,
-                stderr=result.stderr,
-            )
 
         except subprocess.TimeoutExpired:
             return SandboxResult(
@@ -209,27 +244,23 @@ class Sandbox:
         data: list[dict[str, Any]],
         column_mapping: dict[str, str],
         session_dir: Path,
+        viz_mode: Literal["matplotlib", "altair"] = "matplotlib",
     ) -> str:
         """Generate the full script with data-loading prelude.
 
         The prelude:
         - Loads the data into a DataFrame
         - Renames columns from masked names to real names
-        - Sets up matplotlib with Agg backend
+        - Sets up matplotlib with Agg backend (for matplotlib mode)
+        - Sets up Altair and save_chart helper (for altair mode)
         """
-        # Convert column mapping to Python dict literal
-        # This maps masked -> original, we need original -> masked for initial data
-        # Then rename from masked -> original
-        reverse_mapping = {v: k for k, v in column_mapping.items()}
-
-        prelude = textwrap.dedent(f'''
+        # Base prelude for loading data
+        base_prelude = textwrap.dedent(f'''
             # === SANCTUM PRELUDE (auto-injected) ===
             import sys
+            import json
             import pandas as pd
             import numpy as np
-            import matplotlib
-            matplotlib.use('Agg')
-            import matplotlib.pyplot as plt
 
             # Load data
             _sanctum_data = {data!r}
@@ -238,6 +269,40 @@ class Sandbox:
             # Rename columns from masked to original names
             _sanctum_column_mapping = {column_mapping!r}
             df = df.rename(columns=_sanctum_column_mapping)
+        ''').strip()
+
+        if viz_mode == "altair":
+            mode_prelude = textwrap.dedent('''
+
+            # Altair setup
+            import altair as alt
+
+            # Set output paths
+            _sanctum_json_output_path = 'output.json'
+
+            # Helper to save Altair chart as Vega-Lite JSON
+            def save_chart(chart):
+                """Save an Altair chart as Vega-Lite JSON."""
+                spec = chart.to_dict()
+                with open(_sanctum_json_output_path, 'w') as f:
+                    json.dump(spec, f)
+
+            # === END PRELUDE ===
+            ''')
+
+            postlude = textwrap.dedent('''
+
+            # === SANCTUM POSTLUDE (auto-injected) ===
+            # No automatic saving for Altair - user must call save_chart(chart)
+            # === END POSTLUDE ===
+            ''')
+        else:
+            mode_prelude = textwrap.dedent('''
+
+            # Matplotlib setup
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
 
             # Set output path
             _sanctum_output_path = 'output.png'
@@ -248,11 +313,9 @@ class Sandbox:
                 plt.close()
 
             # === END PRELUDE ===
+            ''')
 
-        ''').strip()
-
-        # Append code to save the figure at the end if not already present
-        postlude = textwrap.dedent('''
+            postlude = textwrap.dedent('''
 
             # === SANCTUM POSTLUDE (auto-injected) ===
             # Ensure the plot is saved
@@ -260,9 +323,9 @@ class Sandbox:
                 plt.savefig(_sanctum_output_path, dpi=100, bbox_inches='tight')
                 plt.close('all')
             # === END POSTLUDE ===
-        ''')
+            ''')
 
-        return prelude + "\n\n# === USER CODE ===\n" + code + postlude
+        return base_prelude + mode_prelude + "\n\n# === USER CODE ===\n" + code + postlude
 
     def _build_restricted_env(self) -> dict[str, str]:
         """Build a restricted environment for the subprocess."""

@@ -18,17 +18,36 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sanctum_mcp import MCPServer
 
-from .agent import Agent, AgentConfig, AgentError
+from .agent import (
+    Agent,
+    AgentConfig,
+    AgentError,
+    AgentResult,
+    MATPLOTLIB_SYSTEM_PROMPT,
+    ALTAIR_SYSTEM_PROMPT,
+    CONVERT_TO_ALTAIR_PROMPT,
+    CONVERT_TO_MATPLOTLIB_PROMPT,
+)
 from .models import (
     ConfigStatusResponse,
     ContinueRequest,
+    ConvertRequest,
+    CreateSessionRequest,
     ErrorResponse,
     HealthResponse,
     ReplayRequest,
+    UpdateSessionRequest,
     VisualizeRequest,
     VisualizeResponse,
 )
 from .sandbox import Sandbox, SandboxConfig, validate_code
+from .session_store import (
+    get_session_store,
+    SessionData,
+    SessionMetadata,
+    LogSnapshotModel,
+    VisualizationResultModel,
+)
 
 
 def get_server_api_key() -> str | None:
@@ -257,12 +276,94 @@ def _serialize_agent_log(result) -> dict:
     }
 
 
+def _generate_with_system_prompt(agent: Agent, prompt: str, schema_context, system_prompt: str):
+    """Generate visualization code with a custom system prompt.
+
+    Args:
+        agent: The Agent instance
+        prompt: User's visualization prompt
+        schema_context: Schema context for column mapping
+        system_prompt: Custom system prompt to use
+
+    Returns:
+        AgentResult with generated code
+    """
+
+    tools = agent._build_anthropic_tools()
+    augmented_prompt = agent._augment_prompt_with_schema(prompt, schema_context)
+    messages = [{"role": "user", "content": augmented_prompt}]
+    tool_calls_made = []
+    num_iterations = 0
+
+    while num_iterations < agent.config.max_tool_calls:
+        num_iterations += 1
+        try:
+            response = agent._client.messages.create(
+                model=agent.config.model,
+                max_tokens=agent.config.max_tokens,
+                temperature=agent.config.temperature,
+                system=system_prompt,
+                tools=tools,
+                messages=messages,
+            )
+        except Exception as e:
+            return AgentResult(
+                success=False,
+                error=f"API error: {str(e)}",
+                tool_calls=tool_calls_made,
+                messages=messages,
+            )
+
+        if response.stop_reason == "tool_use":
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    result = agent.mcp_server.call_tool(block.name, block.input)
+                    tool_calls_made.append({
+                        "tool": block.name,
+                        "input": block.input,
+                        "result": result.data if result.success else result.error,
+                    })
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(result.data) if result.success else f"Error: {result.error}",
+                    })
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            messages.append({"role": "assistant", "content": response.content})
+            code = agent._extract_code(response)
+            if code:
+                return AgentResult(
+                    success=True,
+                    code=code,
+                    tool_calls=tool_calls_made,
+                    messages=messages,
+                )
+            else:
+                text_response = agent._extract_text(response)
+                return AgentResult(
+                    success=False,
+                    error=f"No code block found. Response: {text_response[:500] if text_response else 'Empty'}",
+                    tool_calls=tool_calls_made,
+                    messages=messages,
+                )
+
+    return AgentResult(
+        success=False,
+        error=f"Max tool calls ({agent.config.max_tool_calls}) exceeded",
+        tool_calls=tool_calls_made,
+        messages=messages,
+    )
+
+
 async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerator[str, None]:
     """Generate SSE events for visualization progress.
 
     Events:
     - status: Progress updates (generating, validating, executing, retrying)
-    - result: Final success result with image and code
+    - result: Final success result with image/vega_spec and code
     - error: Error message if visualization fails
     """
     api_key = request.api_key or get_server_api_key()
@@ -272,6 +373,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
         return
 
     session_id = str(uuid.uuid4())[:8]
+    viz_mode = request.viz_mode
 
     try:
         yield format_sse_event("status", {"stage": "initializing", "message": "Setting up visualization session"})
@@ -297,9 +399,12 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
         # Get schema context for prompt augmentation
         schema_context = mcp_server.get_schema_with_original_names()
 
-        yield format_sse_event("status", {"stage": "generating", "message": "Generating visualization code"})
+        # Select system prompt based on viz_mode
+        system_prompt = ALTAIR_SYSTEM_PROMPT if viz_mode == "altair" else MATPLOTLIB_SYSTEM_PROMPT
 
-        result = agent.generate_visualization_code(request.prompt, schema_context)
+        yield format_sse_event("status", {"stage": "generating", "message": f"Generating {'interactive' if viz_mode == 'altair' else 'static'} visualization code"})
+
+        result = _generate_with_system_prompt(agent, request.prompt, schema_context, system_prompt)
 
         if not result.success:
             yield format_sse_event("error", {"message": f"Failed to generate code: {result.error}"})
@@ -352,16 +457,22 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
                 code=current_code,
                 data=request.data,
                 column_mapping=column_mapping,
+                viz_mode=viz_mode,
             )
 
             if sandbox_result.success:
                 # Serialize agent logs for the frontend
                 agent_log = _serialize_agent_log(current_result)
-                yield format_sse_event("result", {
-                    "image": sandbox_result.image_base64,
+                result_data = {
                     "code": current_code,
                     "agent_log": agent_log,
-                })
+                    "viz_type": sandbox_result.viz_type,
+                }
+                if sandbox_result.viz_type == "vega_lite":
+                    result_data["vega_spec"] = sandbox_result.vega_spec
+                else:
+                    result_data["image"] = sandbox_result.image_base64
+                yield format_sse_event("result", result_data)
                 return
 
             last_error = f"{sandbox_result.error}"
@@ -556,7 +667,6 @@ The visualization should still accomplish the original goal: {request.original_p
 
         def generate_with_fix_prompt(prompt: str, schema_ctx=None):
             """Generate with the fix system prompt."""
-            from anthropic import Anthropic
             tools = agent._build_anthropic_tools()
             augmented_prompt = agent._augment_prompt_with_schema(prompt, schema_ctx)
             messages = [{"role": "user", "content": augmented_prompt}]
@@ -575,7 +685,6 @@ The visualization should still accomplish the original goal: {request.original_p
                         messages=messages,
                     )
                 except Exception as e:
-                    from .agent import AgentResult
                     return AgentResult(
                         success=False,
                         error=f"API error: {str(e)}",
@@ -603,7 +712,6 @@ The visualization should still accomplish the original goal: {request.original_p
                 else:
                     messages.append({"role": "assistant", "content": response.content})
                     code = agent._extract_code(response)
-                    from .agent import AgentResult
                     if code:
                         return AgentResult(
                             success=True,
@@ -620,7 +728,6 @@ The visualization should still accomplish the original goal: {request.original_p
                             messages=messages,
                         )
 
-            from .agent import AgentResult
             return AgentResult(
                 success=False,
                 error=f"Max tool calls ({agent.config.max_tool_calls}) exceeded",
@@ -789,7 +896,6 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
         yield format_sse_event("status", {"stage": "generating", "message": "Processing adjustment request"})
 
         # Reconstruct previous result from request
-        from .agent import AgentResult
         previous_result = AgentResult(
             success=True,
             code=None,  # Not needed for continuation
@@ -913,6 +1019,305 @@ async def visualize_continue(request: ContinueRequest):
             "Connection": "keep-alive",
         },
     )
+
+
+async def convert_stream_generator(request: ConvertRequest) -> AsyncGenerator[str, None]:
+    """Generate SSE events for converting visualization between modes.
+
+    Events:
+    - status: Progress updates
+    - result: Final success result with converted visualization
+    - error: Error message if conversion fails
+    """
+    api_key = request.api_key or get_server_api_key()
+
+    if not api_key:
+        yield format_sse_event("error", {"message": "No API key provided"})
+        return
+
+    session_id = str(uuid.uuid4())[:8]
+    target_mode = request.target_mode
+
+    try:
+        yield format_sse_event("status", {"stage": "initializing", "message": "Setting up conversion session"})
+
+        df = pd.DataFrame(request.data)
+        if df.empty:
+            yield format_sse_event("error", {"message": "Data cannot be empty"})
+            return
+
+        mcp_server = MCPServer(
+            df=df,
+            session_id=session_id,
+            total_budget=request.total_budget,
+        )
+
+        config = AgentConfig()
+        agent = Agent(
+            mcp_server=mcp_server,
+            config=config,
+            api_key=api_key,
+        )
+
+        # Get schema context for prompt augmentation
+        schema_context = mcp_server.get_schema_with_original_names()
+
+        # Select conversion prompt based on target mode
+        if target_mode == "altair":
+            system_prompt = CONVERT_TO_ALTAIR_PROMPT
+            mode_label = "interactive Altair"
+        else:
+            system_prompt = CONVERT_TO_MATPLOTLIB_PROMPT
+            mode_label = "static matplotlib"
+
+        yield format_sse_event("status", {"stage": "generating", "message": f"Converting to {mode_label}"})
+
+        # Build conversion prompt with the original code
+        conversion_prompt = f"""Convert the following visualization code to {mode_label}:
+
+Original prompt: "{request.original_prompt}"
+
+Current code:
+```python
+{request.current_code}
+```
+
+Please create an equivalent visualization using {'Altair' if target_mode == 'altair' else 'matplotlib'}."""
+
+        result = _generate_with_system_prompt(agent, conversion_prompt, schema_context, system_prompt)
+
+        if not result.success:
+            yield format_sse_event("error", {"message": f"Failed to convert code: {result.error}"})
+            return
+
+        sandbox = Sandbox(SandboxConfig(timeout_seconds=30))
+        column_mapping = mcp_server.get_column_mapping()
+
+        current_code = result.code
+        current_result = result
+        last_error = None
+
+        for attempt in range(config.max_execution_retries + 1):
+            yield format_sse_event("status", {
+                "stage": "validating",
+                "message": f"Validating converted code (attempt {attempt + 1}/{config.max_execution_retries + 1})",
+                "attempt": attempt + 1,
+            })
+
+            is_valid, validation_error = validate_code(current_code)
+            if not is_valid:
+                if attempt < config.max_execution_retries:
+                    yield format_sse_event("status", {
+                        "stage": "retrying",
+                        "message": f"Validation failed, refining: {validation_error}",
+                        "attempt": attempt + 1,
+                    })
+                    current_result = agent.refine_code(
+                        current_result,
+                        f"Code validation failed: {validation_error}",
+                    )
+                    if not current_result.success:
+                        yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
+                        return
+                    current_code = current_result.code
+                    continue
+                else:
+                    yield format_sse_event("error", {
+                        "message": f"Validation failed after {config.max_execution_retries} retries: {validation_error}"
+                    })
+                    return
+
+            yield format_sse_event("status", {
+                "stage": "executing",
+                "message": f"Executing converted code (attempt {attempt + 1}/{config.max_execution_retries + 1})",
+                "attempt": attempt + 1,
+            })
+
+            sandbox_result = sandbox.execute(
+                code=current_code,
+                data=request.data,
+                column_mapping=column_mapping,
+                viz_mode=target_mode,
+            )
+
+            if sandbox_result.success:
+                agent_log = _serialize_agent_log(current_result)
+                result_data = {
+                    "code": current_code,
+                    "agent_log": agent_log,
+                    "viz_type": sandbox_result.viz_type,
+                }
+                if sandbox_result.viz_type == "vega_lite":
+                    result_data["vega_spec"] = sandbox_result.vega_spec
+                else:
+                    result_data["image"] = sandbox_result.image_base64
+                yield format_sse_event("result", result_data)
+                return
+
+            last_error = f"{sandbox_result.error}"
+            if sandbox_result.stderr:
+                last_error += f" | Stderr: {sandbox_result.stderr}"
+
+            if attempt < config.max_execution_retries:
+                yield format_sse_event("status", {
+                    "stage": "retrying",
+                    "message": f"Execution failed, refining: {sandbox_result.error}",
+                    "attempt": attempt + 1,
+                })
+                current_result = agent.refine_code(
+                    current_result,
+                    sandbox_result.error,
+                    sandbox_result.stderr,
+                )
+                if not current_result.success:
+                    yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
+                    return
+                current_code = current_result.code
+
+        yield format_sse_event("error", {
+            "message": f"Conversion failed after {config.max_execution_retries} retries. Last error: {last_error}"
+        })
+
+    except AgentError as e:
+        yield format_sse_event("error", {"message": str(e)})
+    except Exception as e:
+        yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
+
+
+@app.post("/visualize/convert")
+async def visualize_convert(request: ConvertRequest):
+    """Convert a visualization between matplotlib and Altair modes.
+
+    This endpoint converts existing visualization code from one mode to another:
+    - matplotlib → altair: Convert static chart to interactive
+    - altair → matplotlib: Convert interactive chart to static
+
+    Events:
+    - status: {"stage": "...", "message": "...", "attempt": N}
+    - result: {"image": "base64...", "code": "...", "agent_log": {...}, "viz_type": "..."}
+      or {"vega_spec": {...}, "code": "...", "agent_log": {...}, "viz_type": "vega_lite"}
+    - error: {"message": "..."}
+    """
+    return StreamingResponse(
+        convert_stream_generator(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ============================================================================
+# Session Management Endpoints
+# ============================================================================
+
+
+@app.post("/sessions", response_model=SessionData)
+async def create_session(request: CreateSessionRequest | None = None):
+    """Create a new session.
+
+    Args:
+        request: Optional request with session name.
+
+    Returns:
+        The created session data.
+    """
+    store = get_session_store()
+    name = request.name if request else None
+    return store.create_session(name=name)
+
+
+@app.get("/sessions", response_model=list[SessionMetadata])
+async def list_sessions(limit: int = 50, offset: int = 0):
+    """List all sessions, most recently updated first.
+
+    Args:
+        limit: Maximum number of sessions to return.
+        offset: Number of sessions to skip.
+
+    Returns:
+        List of session metadata.
+    """
+    store = get_session_store()
+    return store.list_sessions(limit=limit, offset=offset)
+
+
+@app.get("/sessions/{session_id}", response_model=SessionData)
+async def get_session(session_id: str):
+    """Get a session by ID.
+
+    Args:
+        session_id: The session ID.
+
+    Returns:
+        The session data.
+
+    Raises:
+        HTTPException: If session not found.
+    """
+    store = get_session_store()
+    session = store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    return session
+
+
+@app.put("/sessions/{session_id}", response_model=SessionData)
+async def update_session(session_id: str, request: UpdateSessionRequest):
+    """Update a session.
+
+    Args:
+        session_id: The session ID.
+        request: Fields to update.
+
+    Returns:
+        The updated session data.
+
+    Raises:
+        HTTPException: If session not found.
+    """
+    store = get_session_store()
+
+    # Build updates dict from non-None fields
+    updates = {}
+    if request.name is not None:
+        updates["name"] = request.name
+    if request.raw_data is not None:
+        updates["raw_data"] = request.raw_data
+    if request.sql_query is not None:
+        updates["sql_query"] = request.sql_query
+    if request.log_snapshots is not None:
+        updates["log_snapshots"] = request.log_snapshots
+    if request.matplotlib_result is not None:
+        updates["matplotlib_result"] = request.matplotlib_result
+    if request.altair_result is not None:
+        updates["altair_result"] = request.altair_result
+
+    session = store.update_session(session_id, **updates)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    return session
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session.
+
+    Args:
+        session_id: The session ID.
+
+    Returns:
+        Success message.
+
+    Raises:
+        HTTPException: If session not found.
+    """
+    store = get_session_store()
+    deleted = store.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    return {"message": f"Session {session_id} deleted"}
 
 
 # For running with uvicorn directly

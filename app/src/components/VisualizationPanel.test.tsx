@@ -5,13 +5,15 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { VisualizationPanel } from './VisualizationPanel';
+import type { VisualizeResult } from '../hooks/useVisualize';
 
 describe('VisualizationPanel', () => {
   const defaultProps = {
     onVisualize: vi.fn(),
     isLoading: false,
-    imageBase64: null,
-    code: null,
+    result: null as VisualizeResult | null,
+    matplotlibResult: null as VisualizeResult | null,
+    altairResult: null as VisualizeResult | null,
     error: null,
     progress: null,
   };
@@ -38,7 +40,7 @@ describe('VisualizationPanel', () => {
     const button = screen.getByRole('button', { name: /generate visualization/i });
     fireEvent.click(button);
 
-    expect(onVisualize).toHaveBeenCalledWith('Create a bar chart');
+    expect(onVisualize).toHaveBeenCalledWith('Create a bar chart', 'matplotlib');
   });
 
   it('disables button when disabled prop is true', () => {
@@ -60,9 +62,14 @@ describe('VisualizationPanel', () => {
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
   });
 
-  it('displays generated image', () => {
+  it('displays generated image in static tab', () => {
     const imageBase64 = 'iVBORw0KGgoAAAANS';
-    render(<VisualizationPanel {...defaultProps} imageBase64={imageBase64} />);
+    const matplotlibResult: VisualizeResult = {
+      image: imageBase64,
+      vizType: 'image',
+      code: 'plt.plot([1, 2, 3])',
+    };
+    render(<VisualizationPanel {...defaultProps} matplotlibResult={matplotlibResult} />);
 
     const img = screen.getByAltText(/generated visualization/i);
     expect(img).toBeInTheDocument();
@@ -71,7 +78,12 @@ describe('VisualizationPanel', () => {
 
   it('shows code when Show Code is clicked', () => {
     const code = 'plt.plot([1, 2, 3])';
-    render(<VisualizationPanel {...defaultProps} imageBase64="abc" code={code} />);
+    const matplotlibResult: VisualizeResult = {
+      image: 'abc',
+      vizType: 'image',
+      code: code,
+    };
+    render(<VisualizationPanel {...defaultProps} matplotlibResult={matplotlibResult} />);
 
     // Code should be hidden initially
     expect(screen.queryByText(code)).not.toBeInTheDocument();
@@ -81,5 +93,28 @@ describe('VisualizationPanel', () => {
 
     // Code should now be visible
     expect(screen.getByText(code)).toBeInTheDocument();
+  });
+
+  it('shows mode toggle for output selection', () => {
+    render(<VisualizationPanel {...defaultProps} />);
+
+    expect(screen.getByText('Static (Python)')).toBeInTheDocument();
+    expect(screen.getByText('Interactive')).toBeInTheDocument();
+  });
+
+  it('calls onVisualize with altair mode when Interactive is selected', () => {
+    const onVisualize = vi.fn();
+    render(<VisualizationPanel {...defaultProps} onVisualize={onVisualize} />);
+
+    // Click Interactive mode toggle
+    fireEvent.click(screen.getByRole('button', { name: 'Interactive' }));
+
+    const textarea = screen.getByPlaceholderText(/describe the visualization/i);
+    fireEvent.change(textarea, { target: { value: 'Create a scatter plot' } });
+
+    const button = screen.getByRole('button', { name: /generate interactive/i });
+    fireEvent.click(button);
+
+    expect(onVisualize).toHaveBeenCalledWith('Create a scatter plot', 'altair');
   });
 });

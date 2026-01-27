@@ -5,9 +5,13 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const API_KEY_STORAGE_KEY = 'sanctum_api_key';
 
+export type VizMode = 'matplotlib' | 'altair';
+export type VizType = 'image' | 'vega_lite';
+
 export interface VisualizeRequest {
   data: Record<string, unknown>[];
   prompt: string;
+  viz_mode?: VizMode;
   epsilon?: number;
   total_budget?: number;
   api_key?: string;
@@ -31,7 +35,9 @@ export function clearApiKey(): void {
 }
 
 export interface VisualizeResponse {
-  image: string;
+  image?: string;
+  vega_spec?: object;
+  viz_type: VizType;
   code: string;
 }
 
@@ -116,12 +122,19 @@ export interface AgentLog {
 }
 
 export interface ResultEventData {
-  image: string;
+  image?: string;
+  vega_spec?: object;
+  viz_type: VizType;
   code: string;
   agent_log?: AgentLog;
 }
 
-export interface ReplayResultEventData extends ResultEventData {
+export interface ReplayResultEventData {
+  image?: string;
+  vega_spec?: object;
+  viz_type: VizType;
+  code: string;
+  agent_log?: AgentLog;
   was_fixed: boolean;
 }
 
@@ -340,5 +353,201 @@ export async function continueStream(
         currentData = null;
       }
     }
+  }
+}
+
+export interface ConvertRequest {
+  data: Record<string, unknown>[];
+  current_code: string;
+  target_mode: VizMode;
+  original_prompt: string;
+  total_budget?: number;
+  api_key?: string;
+}
+
+// Session types
+export interface LogSnapshot {
+  id: string;
+  timestamp: string;
+  sql_query: string;
+  user_prompt: string;
+  agent_log: AgentLog | null;
+  final_code: string | null;
+  success: boolean;
+  error: string | null;
+}
+
+export interface VisualizationResult {
+  image?: string;
+  vega_spec?: object;
+  viz_type: VizType;
+  code?: string;
+}
+
+export interface SessionData {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  raw_data: Record<string, unknown>[];
+  sql_query: string;
+  log_snapshots: LogSnapshot[];
+  matplotlib_result: VisualizationResult | null;
+  altair_result: VisualizationResult | null;
+}
+
+export interface SessionMetadata {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  row_count: number;
+  snapshot_count: number;
+}
+
+export interface UpdateSessionRequest {
+  name?: string;
+  raw_data?: Record<string, unknown>[];
+  sql_query?: string;
+  log_snapshots?: LogSnapshot[];
+  matplotlib_result?: VisualizationResult | null;
+  altair_result?: VisualizationResult | null;
+}
+
+export async function convertStream(
+  request: ConvertRequest,
+  onEvent: StreamCallback,
+  signal?: AbortSignal
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/visualize/convert`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError(
+      `Convert stream failed: ${error.detail}`,
+      response.status,
+      error.detail
+    );
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ApiError('No response body', 500);
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let currentEvent: string | null = null;
+    let currentData: string | null = null;
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        currentData = line.slice(6).trim();
+      } else if (line === '' && currentEvent && currentData) {
+        try {
+          const data = JSON.parse(currentData);
+          onEvent({ event: currentEvent as StreamEvent['event'], data });
+        } catch {
+          console.error('Failed to parse SSE data:', currentData);
+        }
+        currentEvent = null;
+        currentData = null;
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Session Management API
+// ============================================================================
+
+export async function createSession(name?: string): Promise<SessionData> {
+  const response = await fetch(`${API_BASE_URL}/sessions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(name ? { name } : {}),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError('Failed to create session', response.status, error.detail);
+  }
+
+  return response.json();
+}
+
+export async function listSessions(limit = 50, offset = 0): Promise<SessionMetadata[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/sessions?limit=${limit}&offset=${offset}`
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError('Failed to list sessions', response.status, error.detail);
+  }
+
+  return response.json();
+}
+
+export async function getSession(sessionId: string): Promise<SessionData> {
+  const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError('Failed to get session', response.status, error.detail);
+  }
+
+  return response.json();
+}
+
+export async function updateSession(
+  sessionId: string,
+  updates: UpdateSessionRequest
+): Promise<SessionData> {
+  const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError('Failed to update session', response.status, error.detail);
+  }
+
+  return response.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+    throw new ApiError('Failed to delete session', response.status, error.detail);
   }
 }

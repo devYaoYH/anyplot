@@ -7,12 +7,12 @@ import {
   visualizeStream,
   replayStream,
   continueStream,
+  convertStream,
   ApiError,
   getApiKey,
 } from '../lib/api';
 import type {
   VisualizeRequest,
-  VisualizeResponse,
   StreamEvent,
   ReplayStreamEvent,
   StatusEventData,
@@ -21,6 +21,8 @@ import type {
   ErrorEventData,
   AgentLog,
   ToolCallLog,
+  VizMode,
+  VizType,
 } from '../lib/api';
 
 export interface ProgressStatus {
@@ -29,7 +31,11 @@ export interface ProgressStatus {
   attempt?: number;
 }
 
-export interface VisualizeResult extends VisualizeResponse {
+export interface VisualizeResult {
+  image?: string;
+  vegaSpec?: object;
+  vizType: VizType;
+  code: string;
   agentLog?: AgentLog;
   wasFixed?: boolean;
 }
@@ -44,12 +50,15 @@ export interface UseVisualizeReturn {
   isLoading: boolean;
   error: string | null;
   result: VisualizeResult | null;
+  matplotlibResult: VisualizeResult | null;
+  altairResult: VisualizeResult | null;
   progress: ProgressStatus | null;
   session: SessionState | null;
   hasActiveSession: boolean;
-  generateVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
+  generateVisualization: (data: Record<string, unknown>[], prompt: string, vizMode?: VizMode) => Promise<void>;
   continueVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
   replayVisualization: (data: Record<string, unknown>[], code: string, originalPrompt: string) => Promise<void>;
+  convertVisualization: (data: Record<string, unknown>[], code: string, originalPrompt: string, targetMode: VizMode) => Promise<void>;
   cancelVisualization: () => void;
   clearResult: () => void;
   clearSession: () => void;
@@ -59,12 +68,14 @@ export function useVisualize(): UseVisualizeReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VisualizeResult | null>(null);
+  const [matplotlibResult, setMatplotlibResult] = useState<VisualizeResult | null>(null);
+  const [altairResult, setAltairResult] = useState<VisualizeResult | null>(null);
   const [progress, setProgress] = useState<ProgressStatus | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const generateVisualization = useCallback(
-    async (data: Record<string, unknown>[], prompt: string) => {
+    async (data: Record<string, unknown>[], prompt: string, vizMode: VizMode = 'matplotlib') => {
       if (data.length === 0) {
         setError('No data to visualize');
         return;
@@ -96,6 +107,7 @@ export function useVisualize(): UseVisualizeReturn {
         const request: VisualizeRequest = {
           data,
           prompt: promptTrimmed,
+          viz_mode: vizMode,
           ...(apiKey && { api_key: apiKey }),
         };
 
@@ -114,11 +126,20 @@ export function useVisualize(): UseVisualizeReturn {
               }
               case 'result': {
                 const resultData = event.data as ResultEventData;
-                setResult({
+                const newResult: VisualizeResult = {
                   image: resultData.image,
+                  vegaSpec: resultData.vega_spec,
+                  vizType: resultData.viz_type,
                   code: resultData.code,
                   agentLog: resultData.agent_log,
-                });
+                };
+                setResult(newResult);
+                // Store in the appropriate result bucket
+                if (resultData.viz_type === 'vega_lite') {
+                  setAltairResult(newResult);
+                } else {
+                  setMatplotlibResult(newResult);
+                }
                 // Save session state for continuation
                 if (resultData.agent_log) {
                   setSession({
@@ -207,12 +228,108 @@ export function useVisualize(): UseVisualizeReturn {
               }
               case 'result': {
                 const resultData = event.data as ReplayResultEventData;
-                setResult({
+                const newResult: VisualizeResult = {
                   image: resultData.image,
+                  vegaSpec: resultData.vega_spec,
+                  vizType: resultData.viz_type || 'image',
                   code: resultData.code,
                   agentLog: resultData.agent_log,
                   wasFixed: resultData.was_fixed,
+                };
+                setResult(newResult);
+                setProgress(null);
+                break;
+              }
+              case 'error': {
+                const errorData = event.data as ErrorEventData;
+                setError(errorData.message);
+                setProgress(null);
+                break;
+              }
+            }
+          },
+          abortControllerRef.current.signal
+        );
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return;
+        }
+        if (err instanceof ApiError) {
+          setError(err.detail || err.message);
+        } else {
+          setError(`Unexpected error: ${err}`);
+        }
+      } finally {
+        setIsLoading(false);
+        setProgress(null);
+        abortControllerRef.current = null;
+      }
+    },
+    []
+  );
+
+  const convertVisualization = useCallback(
+    async (data: Record<string, unknown>[], code: string, originalPrompt: string, targetMode: VizMode) => {
+      if (data.length === 0) {
+        setError('No data to visualize');
+        return;
+      }
+
+      if (!code.trim()) {
+        setError('No code to convert');
+        return;
+      }
+
+      // Cancel any existing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      abortControllerRef.current = new AbortController();
+
+      setIsLoading(true);
+      setError(null);
+      setProgress(null);
+
+      try {
+        const apiKey = getApiKey();
+        const request = {
+          data,
+          current_code: code.trim(),
+          target_mode: targetMode,
+          original_prompt: originalPrompt,
+          ...(apiKey && { api_key: apiKey }),
+        };
+
+        await convertStream(
+          request,
+          (event: StreamEvent) => {
+            switch (event.event) {
+              case 'status': {
+                const statusData = event.data as StatusEventData;
+                setProgress({
+                  stage: statusData.stage,
+                  message: statusData.message,
+                  attempt: statusData.attempt,
                 });
+                break;
+              }
+              case 'result': {
+                const resultData = event.data as ResultEventData;
+                const newResult: VisualizeResult = {
+                  image: resultData.image,
+                  vegaSpec: resultData.vega_spec,
+                  vizType: resultData.viz_type,
+                  code: resultData.code,
+                  agentLog: resultData.agent_log,
+                };
+                setResult(newResult);
+                // Store in the appropriate result bucket
+                if (resultData.viz_type === 'vega_lite') {
+                  setAltairResult(newResult);
+                } else {
+                  setMatplotlibResult(newResult);
+                }
                 setProgress(null);
                 break;
               }
@@ -297,11 +414,20 @@ export function useVisualize(): UseVisualizeReturn {
               }
               case 'result': {
                 const resultData = event.data as ResultEventData;
-                setResult({
+                const newResult: VisualizeResult = {
                   image: resultData.image,
+                  vegaSpec: resultData.vega_spec,
+                  vizType: resultData.viz_type,
                   code: resultData.code,
                   agentLog: resultData.agent_log,
-                });
+                };
+                setResult(newResult);
+                // Store in the appropriate result bucket
+                if (resultData.viz_type === 'vega_lite') {
+                  setAltairResult(newResult);
+                } else {
+                  setMatplotlibResult(newResult);
+                }
                 // Update session state with new messages
                 if (resultData.agent_log) {
                   setSession((prev) => prev ? {
@@ -352,6 +478,8 @@ export function useVisualize(): UseVisualizeReturn {
 
   const clearResult = useCallback(() => {
     setResult(null);
+    setMatplotlibResult(null);
+    setAltairResult(null);
     setError(null);
     setProgress(null);
   }, []);
@@ -364,12 +492,15 @@ export function useVisualize(): UseVisualizeReturn {
     isLoading,
     error,
     result,
+    matplotlibResult,
+    altairResult,
     progress,
     session,
     hasActiveSession: session !== null,
     generateVisualization,
     continueVisualization,
     replayVisualization,
+    convertVisualization,
     cancelVisualization,
     clearResult,
     clearSession,

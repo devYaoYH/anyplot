@@ -12,6 +12,40 @@ from fastapi.testclient import TestClient
 from src.main import app
 
 
+class TestServerStartup:
+    """Tests that the server can start with all dependencies."""
+
+    def test_server_starts_and_responds_to_health(self):
+        """Server should start without import errors and respond to health check.
+
+        This test verifies that all dependencies (including altair) are properly
+        installed and importable when the server starts.
+        """
+        # Creating TestClient imports the app module and all its dependencies
+        client = TestClient(app)
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+    def test_all_sandbox_dependencies_importable(self):
+        """All packages allowed in sandbox should be importable."""
+        from src.sandbox import Sandbox
+
+        # These imports should not fail if dependencies are correctly installed
+        import pandas
+        import numpy
+        import matplotlib
+        import altair
+
+        # Verify altair can create a basic chart spec
+        import pandas as pd
+        df = pd.DataFrame({'x': [1, 2], 'y': [3, 4]})
+        chart = altair.Chart(df).mark_point().encode(x='x', y='y')
+        spec = chart.to_dict()
+        assert '$schema' in spec
+
+
 @pytest.fixture
 def client():
     """Create a test client."""
