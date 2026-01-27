@@ -8,11 +8,13 @@ import { DataUploader } from './components/DataUploader';
 import { SqlEditor } from './components/SqlEditor';
 import { DataGrid } from './components/DataGrid';
 import { VisualizationPanel } from './components/VisualizationPanel';
+import { InteractiveDashboard } from './components/InteractiveDashboard';
 import { LogPanel, type LogSnapshot } from './components/LogPanel';
 import { SessionSelector } from './components/SessionSelector';
 import { useSqlite } from './hooks/useSqlite';
 import { useVisualize } from './hooks/useVisualize';
 import { useSession } from './hooks/useSession';
+import { useDashboard } from './hooks/useDashboard';
 import type { LogSnapshot as ApiLogSnapshot } from './lib/api';
 
 function App() {
@@ -63,6 +65,22 @@ function App() {
     saveSession,
     deleteCurrentSession,
   } = useSession();
+
+  const {
+    charts: dashboardCharts,
+    filters: dashboardFilters,
+    allFilterableFields,
+    addChart: addChartToDashboard,
+    removeChart: removeChartFromDashboard,
+    updateLayout: updateDashboardLayout,
+    addFilter: addDashboardFilter,
+    removeFilter: removeDashboardFilter,
+    updateFilter: updateDashboardFilter,
+    clearFilters: clearDashboardFilters,
+    getFilteredSpec,
+    getApplicableFiltersForChart,
+    clearDashboard,
+  } = useDashboard();
 
   const sqlQueryRef = useRef(sqlQuery);
   sqlQueryRef.current = sqlQuery;
@@ -241,6 +259,13 @@ function App() {
       convertVisualization(data, sourceResult.code, originalPrompt, targetMode);
     },
     [getQueryData, matplotlibResult, altairResult, convertVisualization, pendingPrompt]
+  );
+
+  const handleAddToDashboard = useCallback(
+    (vegaSpec: object, code: string) => {
+      addChartToDashboard(vegaSpec, code);
+    },
+    [addChartToDashboard]
   );
 
   // Create or update snapshot when visualization completes or errors
@@ -445,6 +470,24 @@ function App() {
               onConvert={handleConvert}
               onNewVisualization={handleNewVisualization}
               onCancel={cancelVisualization}
+              onAddToDashboard={handleAddToDashboard}
+              dashboardChartCount={dashboardCharts.length}
+              dashboardContent={
+                <InteractiveDashboard
+                  charts={dashboardCharts}
+                  filters={dashboardFilters}
+                  allFilterableFields={allFilterableFields}
+                  onUpdateLayout={updateDashboardLayout}
+                  onRemoveChart={removeChartFromDashboard}
+                  onAddFilter={addDashboardFilter}
+                  onRemoveFilter={removeDashboardFilter}
+                  onUpdateFilter={updateDashboardFilter}
+                  onClearFilters={clearDashboardFilters}
+                  getFilteredSpec={getFilteredSpec}
+                  getApplicableFiltersForChart={getApplicableFiltersForChart}
+                  onClearDashboard={clearDashboard}
+                />
+              }
               isLoading={visualizeLoading}
               result={visualizeResult}
               matplotlibResult={matplotlibResult}

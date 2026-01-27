@@ -7,7 +7,8 @@ import type { ProgressStatus, VisualizeResult } from '../hooks/useVisualize';
 import type { VizMode } from '../lib/api';
 import { VegaChart } from './VegaChart';
 
-type TabType = 'static' | 'interactive';
+type ChartTabType = 'static' | 'interactive';
+type ViewMode = 'single' | 'dashboard';
 
 interface VisualizationPanelProps {
   onVisualize: (prompt: string, vizMode?: VizMode) => void;
@@ -15,6 +16,9 @@ interface VisualizationPanelProps {
   onConvert?: (targetMode: VizMode) => void;
   onCancel?: () => void;
   onNewVisualization?: () => void;
+  onAddToDashboard?: (vegaSpec: object, code: string) => void;
+  dashboardChartCount?: number;
+  dashboardContent?: React.ReactNode;
   isLoading: boolean;
   result: VisualizeResult | null;
   matplotlibResult: VisualizeResult | null;
@@ -39,6 +43,9 @@ export function VisualizationPanel({
   onConvert,
   onCancel,
   onNewVisualization,
+  onAddToDashboard,
+  dashboardChartCount = 0,
+  dashboardContent,
   isLoading,
   result: _result,
   matplotlibResult,
@@ -52,8 +59,9 @@ export function VisualizationPanel({
   void _result;
   const [prompt, setPrompt] = useState('');
   const [showCode, setShowCode] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>('static');
+  const [activeTab, setActiveTab] = useState<ChartTabType>('static');
   const [vizMode, setVizMode] = useState<VizMode>('matplotlib');
+  const [viewMode, setViewMode] = useState<ViewMode>('single');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,6 +114,12 @@ export function VisualizationPanel({
     setVizMode(mode);
   };
 
+  const handleAddToDashboard = () => {
+    if (onAddToDashboard && altairResult?.vegaSpec && altairResult?.code) {
+      onAddToDashboard(altairResult.vegaSpec, altairResult.code);
+    }
+  };
+
   // Determine which result to show based on active tab
   const currentResult = activeTab === 'interactive' ? altairResult : matplotlibResult;
   const hasStaticResult = matplotlibResult?.image;
@@ -114,6 +128,43 @@ export function VisualizationPanel({
 
   return (
     <div className="space-y-4">
+      {/* View Mode Toggle */}
+      <div className="flex items-center border-b border-gray-200 pb-3">
+        <button
+          onClick={() => setViewMode('single')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            viewMode === 'single'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          Single Chart
+        </button>
+        <button
+          onClick={() => setViewMode('dashboard')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+            viewMode === 'dashboard'
+              ? 'border-purple-600 text-purple-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          Dashboard
+          {dashboardChartCount > 0 && (
+            <span className={`px-1.5 py-0.5 text-xs rounded ${
+              viewMode === 'dashboard' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
+            }`}>
+              {dashboardChartCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Dashboard View */}
+      {viewMode === 'dashboard' ? (
+        <div>{dashboardContent}</div>
+      ) : (
+        /* Single Chart View */
+        <>
       {hasActiveSession && (
         <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-md">
           <div className="flex items-center gap-2">
@@ -331,29 +382,40 @@ export function VisualizationPanel({
             )}
           </div>
 
-          {/* Conversion buttons when viewing the current result */}
-          {onConvert && (
-            <div className="flex gap-2 justify-end">
-              {activeTab === 'static' && hasStaticResult && (
-                <button
-                  onClick={handleConvertToInteractive}
-                  disabled={isLoading}
-                  className="px-3 py-1.5 text-sm bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
-                >
-                  Convert to Interactive
-                </button>
-              )}
-              {activeTab === 'interactive' && hasInteractiveResult && (
-                <button
-                  onClick={handleConvertToStatic}
-                  disabled={isLoading}
-                  className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
-                >
-                  Convert to Python
-                </button>
-              )}
-            </div>
-          )}
+          {/* Action buttons when viewing the current result */}
+          <div className="flex gap-2 justify-end">
+            {activeTab === 'static' && hasStaticResult && onConvert && (
+              <button
+                onClick={handleConvertToInteractive}
+                disabled={isLoading}
+                className="px-3 py-1.5 text-sm bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                Convert to Interactive
+              </button>
+            )}
+            {activeTab === 'interactive' && hasInteractiveResult && (
+              <>
+                {onConvert && (
+                  <button
+                    onClick={handleConvertToStatic}
+                    disabled={isLoading}
+                    className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Convert to Python
+                  </button>
+                )}
+                {onAddToDashboard && (
+                  <button
+                    onClick={handleAddToDashboard}
+                    disabled={isLoading}
+                    className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Add to Dashboard
+                  </button>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Code Display */}
           {showCode && currentResult?.code && (
@@ -369,6 +431,8 @@ export function VisualizationPanel({
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

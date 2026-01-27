@@ -10,6 +10,8 @@ interface VegaChartProps {
   spec: object;
   onExportPng?: (blob: Blob) => void;
   className?: string;
+  width?: number;
+  height?: number;
 }
 
 export function VegaChart({ spec, onExportPng, className = '' }: VegaChartProps) {
