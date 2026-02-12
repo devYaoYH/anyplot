@@ -1,4 +1,4 @@
-"""Pytest configuration for Sanctum Server tests."""
+"""Pytest configuration for AnyPlot Server tests."""
 
 import sys
 from pathlib import Path

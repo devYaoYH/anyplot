@@ -10,7 +10,7 @@ describe('Layout', () => {
   it('renders header with title', () => {
     render(<Layout><div>Content</div></Layout>);
 
-    expect(screen.getByText('Sanctum')).toBeInTheDocument();
+    expect(screen.getByText('AnyPlot')).toBeInTheDocument();
     expect(screen.getByText(/privacy-preserving/i)).toBeInTheDocument();
   });
 

@@ -1,1 +1,1 @@
-"""Unit tests for Sanctum Server."""
+"""Unit tests for AnyPlot Server."""

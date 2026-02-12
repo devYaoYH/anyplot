@@ -1,4 +1,4 @@
-"""End-to-end tests for Sanctum.
+"""End-to-end tests for AnyPlot.
 
 These tests use the real Claude API and require ANTHROPIC_API_KEY to be set.
 Run with: ANTHROPIC_API_KEY=sk-... pytest tests/test_end_to_end.py -v

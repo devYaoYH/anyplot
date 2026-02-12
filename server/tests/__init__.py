@@ -1,1 +1,1 @@
-"""Test package for Sanctum Server."""
+"""Test package for AnyPlot Server."""

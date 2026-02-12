@@ -1,7 +1,7 @@
-"""Agent orchestration module for Sanctum.
+"""Agent orchestration module for AnyPlot.
 
 This module wraps the Claude SDK and manages the interaction between
-the LLM and the MCP tools for privacy-preserving data visualization.
+the LLM and the Sanctum MCP tools for privacy-preserving data visualization.
 """
 
 from __future__ import annotations

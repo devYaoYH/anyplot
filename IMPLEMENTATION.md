@@ -1,4 +1,4 @@
-# IMPLEMENTATION.md: Project Sanctum
+# IMPLEMENTATION.md: AnyPlot
 
 **Status:** Draft v1.0
 **Date:** January 15, 2026
@@ -9,7 +9,7 @@
 
 ## 1. Project Overview
 
-Sanctum is a standalone application allowing researchers to visualize sensitive datasets using the Claude Code SDK without exposing row-level data. It uses a **Local MCP (Model Context Protocol)** layer to intercept agent requests and apply Differential Privacy (DP) before data leaves the secure context.
+AnyPlot is a standalone application allowing researchers to visualize sensitive datasets using the Claude Code SDK without exposing row-level data. It uses a **Local MCP (Model Context Protocol)** layer called **Sanctum** to intercept agent requests and apply Differential Privacy (DP) before data leaves the secure context.
 
 ### Key Objectives
 
@@ -24,8 +24,8 @@ Sanctum is a standalone application allowing researchers to visualize sensitive 
 We use **uv** for Python package management and **Vite** for the frontend.
 
 ```text
-sanctum/
-├── mcp/                            # [CORE] Privacy & Data Layer (Python)
+anyplot/
+├── mcp/                            # [CORE] Sanctum Privacy & Data Layer (Python)
 │   ├── src/
 │   │   ├── __init__.py
 │   │   ├── privacy.py              # DP logic & masking

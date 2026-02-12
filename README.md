@@ -1,6 +1,6 @@
-# Sanctum
+# AnyPlot
 
-A local-first, privacy-preserving data visualization platform. Sanctum enables users to create visualizations from sensitive datasets using Claude without exposing raw data to the LLM.
+A local-first, privacy-preserving data visualization platform. AnyPlot enables users to create visualizations from sensitive datasets using Claude without exposing raw data to the LLM.
 
 ## How It Works
 
@@ -15,8 +15,8 @@ CSV Upload → Local SQL Filtering → Privacy Layer → Claude → Code Executi
 ## Project Structure
 
 ```
-sanctum/
-├── mcp/        # Privacy layer (DP engine, schema masking, MCP protocol)
+anyplot/
+├── mcp/        # Sanctum privacy layer (DP engine, schema masking, MCP protocol)
 ├── server/     # FastAPI backend (agent orchestration, sandbox execution)
 ├── app/        # React frontend (data upload, SQL editor, visualization)
 └── tests/      # End-to-end tests

@@ -1,5 +1,5 @@
 /**
- * Main application component for Sanctum.
+ * Main application component for AnyPlot.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

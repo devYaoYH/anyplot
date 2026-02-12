@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start script for Sanctum - brings up both frontend and backend
+# Start script for AnyPlot - brings up both frontend and backend
 
 set -e
 
@@ -14,7 +14,7 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-echo "Starting Sanctum..."
+echo "Starting AnyPlot..."
 
 # Start backend server
 echo "Starting backend server on http://localhost:8000"
@@ -30,7 +30,7 @@ npm run dev &
 APP_PID=$!
 
 echo ""
-echo "Sanctum is running:"
+echo "AnyPlot is running:"
 echo "  Frontend: http://localhost:5173"
 echo "  Backend:  http://localhost:8000"
 echo ""
