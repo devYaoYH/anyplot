@@ -27,6 +27,10 @@ anyplot/
 ```bash
 # Prerequisites: Python 3.12+, Node.js 20+, uv
 
+# Clone repo
+git clone https://github.com/devYaoYH/anyplot.git
+cd anyplot
+
 # Setup backend
 uv venv && uv pip install -e ./server -e ./mcp
 
