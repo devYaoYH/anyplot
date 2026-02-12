@@ -1,18 +1,30 @@
 /**
- * Visualization panel with prompt input and image display.
+ * Visualization panel with dual-mode support (matplotlib and Vega-Lite).
  */
 
-import { useState } from 'react';
-import type { ProgressStatus } from '../hooks/useVisualize';
+import { useState, useCallback } from 'react';
+import type { ProgressStatus, VisualizeResult } from '../hooks/useVisualize';
+import type { VizMode } from '../lib/api';
+import { VegaChart } from './VegaChart';
+
+type ChartTabType = 'static' | 'interactive';
+type ViewMode = 'single' | 'dashboard';
 
 interface VisualizationPanelProps {
-  onVisualize: (prompt: string) => void;
+  onVisualize: (prompt: string, vizMode?: VizMode) => void;
   onContinue?: (prompt: string) => void;
+  onConvert?: (targetMode: VizMode) => void;
   onCancel?: () => void;
   onNewVisualization?: () => void;
+  onAddToDashboard?: (vegaSpec: object, code: string, splitCharts: boolean) => void;
+  isCompositeSpec?: (spec: object) => boolean;
+  countChartsInSpec?: (spec: object) => number;
+  dashboardChartCount?: number;
+  dashboardContent?: React.ReactNode;
   isLoading: boolean;
-  imageBase64: string | null;
-  code: string | null;
+  result: VisualizeResult | null;
+  matplotlibResult: VisualizeResult | null;
+  altairResult: VisualizeResult | null;
   error: string | null;
   progress: ProgressStatus | null;
   hasActiveSession?: boolean;
@@ -30,18 +42,30 @@ const stageLabels: Record<ProgressStatus['stage'], string> = {
 export function VisualizationPanel({
   onVisualize,
   onContinue,
+  onConvert,
   onCancel,
   onNewVisualization,
+  onAddToDashboard,
+  isCompositeSpec,
+  countChartsInSpec,
+  dashboardChartCount = 0,
+  dashboardContent,
   isLoading,
-  imageBase64,
-  code,
+  result: _result,
+  matplotlibResult,
+  altairResult,
   error,
   progress,
   hasActiveSession = false,
   disabled = false,
 }: VisualizationPanelProps) {
+  // result is passed but we use matplotlibResult/altairResult for tab-specific display
+  void _result;
   const [prompt, setPrompt] = useState('');
   const [showCode, setShowCode] = useState(false);
+  const [activeTab, setActiveTab] = useState<ChartTabType>('static');
+  const [vizMode, setVizMode] = useState<VizMode>('matplotlib');
+  const [viewMode, setViewMode] = useState<ViewMode>('single');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +73,9 @@ export function VisualizationPanel({
       if (hasActiveSession && onContinue) {
         onContinue(prompt.trim());
       } else {
-        onVisualize(prompt.trim());
+        onVisualize(prompt.trim(), vizMode);
+        // Switch to the appropriate tab based on mode
+        setActiveTab(vizMode === 'altair' ? 'interactive' : 'static');
       }
       // Clear prompt after continuing but not after new visualization
       if (hasActiveSession) {
@@ -63,8 +89,94 @@ export function VisualizationPanel({
     onNewVisualization?.();
   };
 
+  const handleConvertToInteractive = () => {
+    if (onConvert && matplotlibResult?.code) {
+      onConvert('altair');
+      setActiveTab('interactive');
+    }
+  };
+
+  const handleConvertToStatic = () => {
+    if (onConvert && altairResult?.code) {
+      onConvert('matplotlib');
+      setActiveTab('static');
+    }
+  };
+
+  const handleExportPng = useCallback((blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'visualization.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleModeToggle = (mode: VizMode) => {
+    setVizMode(mode);
+  };
+
+  const handleAddToDashboard = (splitCharts: boolean) => {
+    if (onAddToDashboard && altairResult?.vegaSpec && altairResult?.code) {
+      onAddToDashboard(altairResult.vegaSpec, altairResult.code, splitCharts);
+    }
+  };
+
+  // Check if current spec is composite
+  const specIsComposite = altairResult?.vegaSpec && isCompositeSpec
+    ? isCompositeSpec(altairResult.vegaSpec)
+    : false;
+  const chartCountInSpec = altairResult?.vegaSpec && countChartsInSpec
+    ? countChartsInSpec(altairResult.vegaSpec)
+    : 1;
+
+  // Determine which result to show based on active tab
+  const currentResult = activeTab === 'interactive' ? altairResult : matplotlibResult;
+  const hasStaticResult = matplotlibResult?.image;
+  const hasInteractiveResult = altairResult?.vegaSpec;
+  const hasAnyResult = hasStaticResult || hasInteractiveResult;
+
   return (
     <div className="space-y-4">
+      {/* View Mode Toggle */}
+      <div className="flex items-center border-b border-gray-200 pb-3">
+        <button
+          onClick={() => setViewMode('single')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            viewMode === 'single'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          Single Chart
+        </button>
+        <button
+          onClick={() => setViewMode('dashboard')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+            viewMode === 'dashboard'
+              ? 'border-purple-600 text-purple-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          Dashboard
+          {dashboardChartCount > 0 && (
+            <span className={`px-1.5 py-0.5 text-xs rounded ${
+              viewMode === 'dashboard' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'
+            }`}>
+              {dashboardChartCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* Dashboard View */}
+      {viewMode === 'dashboard' ? (
+        <div>{dashboardContent}</div>
+      ) : (
+        /* Single Chart View */
+        <>
       {hasActiveSession && (
         <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-md">
           <div className="flex items-center gap-2">
@@ -82,7 +194,7 @@ export function VisualizationPanel({
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-2">
+      <form onSubmit={handleSubmit} className="space-y-3">
         <label className="block text-sm font-medium text-gray-700">
           {hasActiveSession ? 'Adjustment Request' : 'Visualization Prompt'}
         </label>
@@ -103,6 +215,38 @@ export function VisualizationPanel({
             ${hasActiveSession ? 'border-blue-300' : ''}
           `}
         />
+
+        {/* Mode Toggle - Only show when not in an active session */}
+        {!hasActiveSession && (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-600">Output mode:</span>
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => handleModeToggle('matplotlib')}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  vizMode === 'matplotlib'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Static (Python)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeToggle('altair')}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  vizMode === 'altair'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Interactive
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-2">
           <button
             type="submit"
@@ -115,7 +259,9 @@ export function VisualizationPanel({
                   ? 'bg-gray-400 cursor-not-allowed'
                   : hasActiveSession
                     ? 'bg-blue-600 hover:bg-blue-700'
-                    : 'bg-green-600 hover:bg-green-700'
+                    : vizMode === 'altair'
+                      ? 'bg-purple-600 hover:bg-purple-700'
+                      : 'bg-green-600 hover:bg-green-700'
               }
             `}
           >
@@ -123,7 +269,9 @@ export function VisualizationPanel({
               ? hasActiveSession ? 'Adjusting...' : 'Generating...'
               : hasActiveSession
                 ? 'Send Adjustment'
-                : 'Generate Visualization'}
+                : vizMode === 'altair'
+                  ? 'Generate Interactive'
+                  : 'Generate Visualization'}
           </button>
           {isLoading && onCancel && (
             <button
@@ -160,10 +308,34 @@ export function VisualizationPanel({
         </div>
       )}
 
-      {imageBase64 && (
-        <div className="space-y-2">
-          <div className="flex justify-between items-center">
-            <h3 className="text-sm font-medium text-gray-700">Result</h3>
+      {hasAnyResult && (
+        <div className="space-y-3">
+          {/* Tab Navigation */}
+          <div className="flex items-center justify-between">
+            <div className="flex border-b border-gray-200">
+              <button
+                onClick={() => setActiveTab('static')}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'static'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } ${!hasStaticResult ? 'opacity-50' : ''}`}
+              >
+                Static (Python)
+                {hasStaticResult && <span className="ml-1 text-green-500">*</span>}
+              </button>
+              <button
+                onClick={() => setActiveTab('interactive')}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'interactive'
+                    ? 'border-purple-600 text-purple-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } ${!hasInteractiveResult ? 'opacity-50' : ''}`}
+              >
+                Interactive
+                {hasInteractiveResult && <span className="ml-1 text-green-500">*</span>}
+              </button>
+            </div>
             <button
               onClick={() => setShowCode(!showCode)}
               className="text-sm text-blue-600 hover:text-blue-800"
@@ -171,21 +343,128 @@ export function VisualizationPanel({
               {showCode ? 'Hide Code' : 'Show Code'}
             </button>
           </div>
+
+          {/* Tab Content */}
           <div className="border rounded-md overflow-hidden bg-white">
-            <img
-              src={`data:image/png;base64,${imageBase64}`}
-              alt="Generated visualization"
-              className="max-w-full h-auto"
-            />
+            {activeTab === 'static' ? (
+              hasStaticResult ? (
+                <div>
+                  <img
+                    src={`data:image/png;base64,${matplotlibResult!.image}`}
+                    alt="Generated visualization"
+                    className="max-w-full h-auto"
+                  />
+                </div>
+              ) : (
+                <div className="p-8 text-center text-gray-500">
+                  <p>No static visualization yet.</p>
+                  {hasInteractiveResult && onConvert && (
+                    <button
+                      onClick={handleConvertToStatic}
+                      disabled={isLoading}
+                      className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Convert to Python
+                    </button>
+                  )}
+                </div>
+              )
+            ) : (
+              hasInteractiveResult ? (
+                <div className="p-4">
+                  <VegaChart
+                    spec={altairResult!.vegaSpec!}
+                    onExportPng={handleExportPng}
+                  />
+                </div>
+              ) : (
+                <div className="p-8 text-center text-gray-500">
+                  <p>No interactive visualization yet.</p>
+                  {hasStaticResult && onConvert && (
+                    <button
+                      onClick={handleConvertToInteractive}
+                      disabled={isLoading}
+                      className="mt-3 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Convert to Interactive
+                    </button>
+                  )}
+                </div>
+              )
+            )}
           </div>
-          {showCode && code && (
+
+          {/* Action buttons when viewing the current result */}
+          <div className="flex gap-2 justify-end">
+            {activeTab === 'static' && hasStaticResult && onConvert && (
+              <button
+                onClick={handleConvertToInteractive}
+                disabled={isLoading}
+                className="px-3 py-1.5 text-sm bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                Convert to Interactive
+              </button>
+            )}
+            {activeTab === 'interactive' && hasInteractiveResult && (
+              <>
+                {onConvert && (
+                  <button
+                    onClick={handleConvertToStatic}
+                    disabled={isLoading}
+                    className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Convert to Python
+                  </button>
+                )}
+                {onAddToDashboard && (
+                  specIsComposite ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleAddToDashboard(true)}
+                        disabled={isLoading}
+                        className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Split & Add ({chartCountInSpec} charts)
+                      </button>
+                      <button
+                        onClick={() => handleAddToDashboard(false)}
+                        disabled={isLoading}
+                        className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                        title="Add as single combined chart"
+                      >
+                        Add Combined
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleAddToDashboard(false)}
+                      disabled={isLoading}
+                      className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Add to Dashboard
+                    </button>
+                  )
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Code Display */}
+          {showCode && currentResult?.code && (
             <div className="bg-gray-900 rounded-md p-4 overflow-auto">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs text-gray-400">
+                  {activeTab === 'interactive' ? 'Altair (Python)' : 'matplotlib (Python)'}
+                </span>
+              </div>
               <pre className="text-sm text-gray-100 whitespace-pre-wrap">
-                {code}
+                {currentResult.code}
               </pre>
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

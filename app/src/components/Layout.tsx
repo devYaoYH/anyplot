@@ -8,21 +8,25 @@ import { Settings } from './Settings';
 interface LayoutProps {
   children: ReactNode;
   rightPanel?: ReactNode;
+  headerExtra?: ReactNode;
   onApiKeyChange?: () => void;
 }
 
-export function Layout({ children, rightPanel, onApiKeyChange }: LayoutProps) {
+export function Layout({ children, rightPanel, headerExtra, onApiKeyChange }: LayoutProps) {
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white shadow-sm">
-        <div className="max-w-[1600px] mx-auto px-4 py-4 flex justify-between items-start">
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">
-              Sanctum
-            </h1>
-            <p className="text-sm text-gray-500">
-              Privacy-preserving data visualization
-            </p>
+        <div className="max-w-[1600px] mx-auto px-4 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <div>
+              <h1 className="text-xl font-semibold text-gray-900">
+                Sanctum
+              </h1>
+              <p className="text-sm text-gray-500">
+                Privacy-preserving data visualization
+              </p>
+            </div>
+            {headerExtra}
           </div>
           <Settings onApiKeyChange={onApiKeyChange} />
         </div>

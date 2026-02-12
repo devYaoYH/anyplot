@@ -6,6 +6,7 @@ Tests:
 - Timeout enforcement
 - Code validation for dangerous patterns
 - Cleanup of temporary files
+- Altair/Vega-Lite support
 """
 
 import base64
@@ -283,6 +284,116 @@ sns.histplot(df['values'])
         code = "compile('print(1)', '<string>', 'exec')"
         is_valid, error = validate_code(code)
         assert not is_valid
+
+
+class TestAltairExecution:
+    """Tests for Altair/Vega-Lite mode execution."""
+
+    @pytest.fixture
+    def sandbox(self):
+        """Create a sandbox instance."""
+        return Sandbox()
+
+    @pytest.fixture
+    def sample_data(self):
+        """Sample data for testing."""
+        return [
+            {"col_abc": 10, "col_def": 100},
+            {"col_abc": 20, "col_def": 200},
+            {"col_abc": 30, "col_def": 300},
+        ]
+
+    @pytest.fixture
+    def column_mapping(self):
+        """Column mapping from masked to original names."""
+        return {"col_abc": "x_values", "col_def": "y_values"}
+
+    def test_altair_produces_vega_spec(self, sandbox, sample_data, column_mapping):
+        """Altair code should produce a Vega-Lite JSON spec."""
+        code = """
+chart = alt.Chart(df).mark_point().encode(
+    x='x_values',
+    y='y_values'
+)
+save_chart(chart)
+"""
+        result = sandbox.execute(code, sample_data, column_mapping, viz_mode="altair")
+
+        assert result.success, f"Execution failed: {result.error}\nStderr: {result.stderr}"
+        assert result.vega_spec is not None
+        assert result.viz_type == "vega_lite"
+        assert "$schema" in result.vega_spec
+        assert result.image_bytes is None  # No PNG for altair mode
+
+    def test_altair_bar_chart(self, sandbox, sample_data, column_mapping):
+        """Altair bar chart should work."""
+        code = """
+chart = alt.Chart(df).mark_bar().encode(
+    x='x_values:O',
+    y='y_values:Q'
+).properties(title='Test Bar Chart')
+save_chart(chart)
+"""
+        result = sandbox.execute(code, sample_data, column_mapping, viz_mode="altair")
+
+        assert result.success, f"Execution failed: {result.error}\nStderr: {result.stderr}"
+        assert result.vega_spec is not None
+        assert result.viz_type == "vega_lite"
+
+    def test_altair_interactive_chart(self, sandbox, sample_data, column_mapping):
+        """Altair interactive chart with tooltips should work."""
+        code = """
+chart = alt.Chart(df).mark_circle().encode(
+    x='x_values',
+    y='y_values',
+    tooltip=['x_values', 'y_values']
+).interactive()
+save_chart(chart)
+"""
+        result = sandbox.execute(code, sample_data, column_mapping, viz_mode="altair")
+
+        assert result.success, f"Execution failed: {result.error}\nStderr: {result.stderr}"
+        assert result.vega_spec is not None
+
+    def test_altair_without_save_chart_fails(self, sandbox, sample_data, column_mapping):
+        """Altair code without save_chart() should fail."""
+        code = """
+chart = alt.Chart(df).mark_point().encode(
+    x='x_values',
+    y='y_values'
+)
+# Missing save_chart(chart) call
+"""
+        result = sandbox.execute(code, sample_data, column_mapping, viz_mode="altair")
+
+        assert not result.success
+        assert "No Vega-Lite spec was produced" in result.error
+
+    def test_altair_column_mapping_applied(self, sandbox, sample_data, column_mapping):
+        """Masked column names should be mapped to original names in altair mode."""
+        code = """
+# Verify column names are mapped correctly
+assert 'x_values' in df.columns, f"x_values not in {df.columns.tolist()}"
+assert 'y_values' in df.columns, f"y_values not in {df.columns.tolist()}"
+chart = alt.Chart(df).mark_line().encode(x='x_values', y='y_values')
+save_chart(chart)
+"""
+        result = sandbox.execute(code, sample_data, column_mapping, viz_mode="altair")
+
+        assert result.success, f"Execution failed: {result.error}\nStderr: {result.stderr}"
+
+    def test_matplotlib_mode_still_works(self, sandbox, sample_data, column_mapping):
+        """Matplotlib mode should still work when explicitly specified."""
+        code = """
+plt.figure()
+plt.plot(df['x_values'], df['y_values'])
+"""
+        result = sandbox.execute(code, sample_data, column_mapping, viz_mode="matplotlib")
+
+        assert result.success, f"Execution failed: {result.error}"
+        assert result.image_bytes is not None
+        assert result.viz_type == "image"
+        assert result.vega_spec is None
 
 
 class TestSandboxCleanup:

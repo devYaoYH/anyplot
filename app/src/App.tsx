@@ -8,9 +8,14 @@ import { DataUploader } from './components/DataUploader';
 import { SqlEditor } from './components/SqlEditor';
 import { DataGrid } from './components/DataGrid';
 import { VisualizationPanel } from './components/VisualizationPanel';
+import { InteractiveDashboard } from './components/InteractiveDashboard';
 import { LogPanel, type LogSnapshot } from './components/LogPanel';
+import { SessionSelector } from './components/SessionSelector';
 import { useSqlite } from './hooks/useSqlite';
 import { useVisualize } from './hooks/useVisualize';
+import { useSession } from './hooks/useSession';
+import { useDashboard } from './hooks/useDashboard';
+import type { LogSnapshot as ApiLogSnapshot } from './lib/api';
 
 function App() {
   const [rawData, setRawData] = useState<Record<string, unknown>[]>([]);
@@ -24,6 +29,7 @@ function App() {
   const [pendingReplay, setPendingReplay] = useState<{ code: string; prompt: string } | null>(null);
   const [pendingContinue, setPendingContinue] = useState<string | null>(null);
   const [currentSnapshotId, setCurrentSnapshotId] = useState<string | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(false);
 
   const {
     isReady: sqliteReady,
@@ -37,18 +43,151 @@ function App() {
     isLoading: visualizeLoading,
     error: visualizeError,
     result: visualizeResult,
+    matplotlibResult,
+    altairResult,
     progress: visualizeProgress,
     hasActiveSession,
     generateVisualization,
     continueVisualization,
     replayVisualization,
+    convertVisualization,
     cancelVisualization,
     clearResult,
     clearSession,
+    restoreResults,
   } = useVisualize();
 
+  const {
+    currentSession,
+    sessions,
+    isLoading: sessionLoading,
+    createNewSession,
+    loadSession,
+    saveSession,
+    deleteCurrentSession,
+  } = useSession();
+
+  const {
+    charts: dashboardCharts,
+    filters: dashboardFilters,
+    allFilterableFields,
+    addChartsFromSpec,
+    isCompositeSpec,
+    countChartsInSpec,
+    removeChart: removeChartFromDashboard,
+    updateLayout: updateDashboardLayout,
+    addFilter: addDashboardFilter,
+    removeFilter: removeDashboardFilter,
+    updateFilter: updateDashboardFilter,
+    clearFilters: clearDashboardFilters,
+    getFilteredSpec,
+    getApplicableFiltersForChart,
+    clearDashboard,
+  } = useDashboard();
+
+  const sqlQueryRef = useRef(sqlQuery);
+  sqlQueryRef.current = sqlQuery;
+
+  // Convert API LogSnapshot to UI LogSnapshot format
+  const apiToUiSnapshot = (snap: ApiLogSnapshot): LogSnapshot => ({
+    id: snap.id,
+    timestamp: new Date(snap.timestamp),
+    sqlQuery: snap.sql_query,
+    userPrompt: snap.user_prompt,
+    agentLog: snap.agent_log,
+    finalCode: snap.final_code,
+    success: snap.success,
+    error: snap.error,
+  });
+
+  // Convert UI LogSnapshot to API LogSnapshot format
+  const uiToApiSnapshot = (snap: LogSnapshot): ApiLogSnapshot => ({
+    id: snap.id,
+    timestamp: snap.timestamp.toISOString(),
+    sql_query: snap.sqlQuery,
+    user_prompt: snap.userPrompt,
+    agent_log: snap.agentLog,
+    final_code: snap.finalCode,
+    success: snap.success,
+    error: snap.error,
+  });
+
+  // Restore session when loaded
+  useEffect(() => {
+    if (currentSession && sqliteReady && !isRestoringSession) {
+      setIsRestoringSession(true);
+
+      // Restore raw data
+      if (currentSession.raw_data.length > 0) {
+        setRawData(currentSession.raw_data);
+        loadData(currentSession.raw_data);
+
+        // Restore SQL query
+        setSqlQuery(currentSession.sql_query);
+
+        // Run the query to populate results
+        setTimeout(() => {
+          const result = runQuery(currentSession.sql_query);
+          if (result) {
+            setQueryResult(result);
+          }
+        }, 100);
+      }
+
+      // Restore log snapshots
+      if (currentSession.log_snapshots.length > 0) {
+        setLogSnapshots(currentSession.log_snapshots.map(apiToUiSnapshot));
+      }
+
+      // Restore visualization results
+      if (currentSession.matplotlib_result || currentSession.altair_result) {
+        restoreResults(
+          currentSession.matplotlib_result,
+          currentSession.altair_result
+        );
+      }
+
+      setIsRestoringSession(false);
+    }
+  }, [currentSession?.id, sqliteReady, restoreResults]);
+
+  // Save session when state changes (debounced via saveSession)
+  const saveCurrentState = useCallback(() => {
+    if (isRestoringSession || !currentSession) return;
+
+    saveSession({
+      raw_data: rawData,
+      sql_query: sqlQuery,
+      log_snapshots: logSnapshots.map(uiToApiSnapshot),
+      matplotlib_result: matplotlibResult ? {
+        image: matplotlibResult.image,
+        vega_spec: matplotlibResult.vegaSpec,
+        viz_type: matplotlibResult.vizType,
+        code: matplotlibResult.code,
+      } : null,
+      altair_result: altairResult ? {
+        image: altairResult.image,
+        vega_spec: altairResult.vegaSpec,
+        viz_type: altairResult.vizType,
+        code: altairResult.code,
+      } : null,
+    });
+  }, [rawData, sqlQuery, logSnapshots, matplotlibResult, altairResult, currentSession, isRestoringSession, saveSession]);
+
+  // Auto-save when state changes
+  useEffect(() => {
+    if (!isRestoringSession && currentSession) {
+      saveCurrentState();
+    }
+  }, [rawData, sqlQuery, logSnapshots, matplotlibResult, altairResult]);
+
   const handleDataLoaded = useCallback(
-    (data: Record<string, unknown>[]) => {
+    async (data: Record<string, unknown>[]) => {
+      // Create a new session if none exists
+      if (!currentSession) {
+        await createNewSession();
+      }
+
       setRawData(data);
       loadData(data);
       setQueryResult(null);
@@ -59,7 +198,7 @@ function App() {
         setQueryResult(result);
       }
     },
-    [loadData, runQuery, clearResult]
+    [loadData, runQuery, clearResult, currentSession, createNewSession]
   );
 
   const handleRunQuery = useCallback(() => {
@@ -71,9 +210,6 @@ function App() {
       setCurrentSnapshotId(null);
     }
   }, [runQuery, sqlQuery, clearSession]);
-
-  const sqlQueryRef = useRef(sqlQuery);
-  sqlQueryRef.current = sqlQuery;
 
   const getQueryData = useCallback(() => {
     if (!queryResult || queryResult.values.length === 0) {
@@ -89,14 +225,14 @@ function App() {
   }, [queryResult]);
 
   const handleVisualize = useCallback(
-    (prompt: string) => {
+    (prompt: string, vizMode: 'matplotlib' | 'altair' = 'matplotlib') => {
       const data = getQueryData();
       if (!data) return;
 
       // Store the prompt for snapshot creation
       setPendingPrompt(prompt);
       setCurrentSnapshotId(null); // New visualization, new snapshot
-      generateVisualization(data, prompt);
+      generateVisualization(data, prompt, vizMode);
     },
     [getQueryData, generateVisualization]
   );
@@ -118,6 +254,30 @@ function App() {
     clearResult();
     setCurrentSnapshotId(null);
   }, [clearSession, clearResult]);
+
+  const handleConvert = useCallback(
+    (targetMode: 'matplotlib' | 'altair') => {
+      const data = getQueryData();
+      if (!data) return;
+
+      // Get the current code to convert from
+      const sourceResult = targetMode === 'altair' ? matplotlibResult : altairResult;
+      if (!sourceResult?.code) return;
+
+      // Use the original prompt if available, otherwise use a generic description
+      const originalPrompt = pendingPrompt || 'visualization';
+
+      convertVisualization(data, sourceResult.code, originalPrompt, targetMode);
+    },
+    [getQueryData, matplotlibResult, altairResult, convertVisualization, pendingPrompt]
+  );
+
+  const handleAddToDashboard = useCallback(
+    (vegaSpec: object, code: string, splitCharts: boolean) => {
+      addChartsFromSpec(vegaSpec, code, splitCharts);
+    },
+    [addChartsFromSpec]
+  );
 
   // Create or update snapshot when visualization completes or errors
   useEffect(() => {
@@ -192,11 +352,35 @@ function App() {
     clearDatabase();
     clearResult();
     setSqlQuery('SELECT * FROM data LIMIT 100');
+    setLogSnapshots([]);
   }, [clearDatabase, clearResult]);
 
   const handleClearHistory = useCallback(() => {
     setLogSnapshots([]);
   }, []);
+
+  const handleCreateSession = useCallback(async (name?: string) => {
+    await createNewSession(name);
+    // Clear current state for new session
+    handleClear();
+  }, [createNewSession, handleClear]);
+
+  const handleLoadSession = useCallback(async (sessionId: string) => {
+    // Clear current state before loading
+    setRawData([]);
+    setQueryResult(null);
+    clearDatabase();
+    clearResult();
+    setLogSnapshots([]);
+    setSqlQuery('SELECT * FROM data LIMIT 100');
+
+    await loadSession(sessionId);
+  }, [loadSession, clearDatabase, clearResult]);
+
+  const handleDeleteSession = useCallback(async () => {
+    await deleteCurrentSession();
+    handleClear();
+  }, [deleteCurrentSession, handleClear]);
 
   const hasData = rawData.length > 0;
   const hasQueryResult = queryResult && queryResult.values.length > 0;
@@ -210,6 +394,16 @@ function App() {
           onReplay={handleReplay}
           canReplay={!!hasQueryResult}
           isLoading={visualizeLoading}
+        />
+      }
+      headerExtra={
+        <SessionSelector
+          currentSession={currentSession}
+          sessions={sessions}
+          isLoading={sessionLoading}
+          onCreateSession={handleCreateSession}
+          onLoadSession={handleLoadSession}
+          onDeleteSession={handleDeleteSession}
         />
       }
     >
@@ -284,11 +478,33 @@ function App() {
             <VisualizationPanel
               onVisualize={handleVisualize}
               onContinue={handleContinue}
+              onConvert={handleConvert}
               onNewVisualization={handleNewVisualization}
               onCancel={cancelVisualization}
+              onAddToDashboard={handleAddToDashboard}
+              isCompositeSpec={isCompositeSpec}
+              countChartsInSpec={countChartsInSpec}
+              dashboardChartCount={dashboardCharts.length}
+              dashboardContent={
+                <InteractiveDashboard
+                  charts={dashboardCharts}
+                  filters={dashboardFilters}
+                  allFilterableFields={allFilterableFields}
+                  onUpdateLayout={updateDashboardLayout}
+                  onRemoveChart={removeChartFromDashboard}
+                  onAddFilter={addDashboardFilter}
+                  onRemoveFilter={removeDashboardFilter}
+                  onUpdateFilter={updateDashboardFilter}
+                  onClearFilters={clearDashboardFilters}
+                  getFilteredSpec={getFilteredSpec}
+                  getApplicableFiltersForChart={getApplicableFiltersForChart}
+                  onClearDashboard={clearDashboard}
+                />
+              }
               isLoading={visualizeLoading}
-              imageBase64={visualizeResult?.image || null}
-              code={visualizeResult?.code || null}
+              result={visualizeResult}
+              matplotlibResult={matplotlibResult}
+              altairResult={altairResult}
               error={visualizeError}
               progress={visualizeProgress}
               hasActiveSession={hasActiveSession}
