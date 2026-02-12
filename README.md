@@ -38,6 +38,8 @@ uv run uvicorn server.src.main:app --reload --port 8000
 cd app && npm run dev
 ```
 
+**Note on packages**: Generated visualization code runs in the same Python environment as the backend server. Install additional packages (e.g., `seaborn`, `plotly`, `scipy`) via `uv pip install` to make them available to generated code. The sandbox blocks only dangerous imports (`os`, `subprocess`, `socket`, etc.).
+
 ## Testing
 
 ```bash
