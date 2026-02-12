@@ -20,7 +20,7 @@ export function Layout({ children, rightPanel, headerExtra, onApiKeyChange }: La
           <div className="flex items-center gap-4">
             <div>
               <h1 className="text-xl font-semibold text-gray-900">
-                Sanctum
+                AnyPlot
               </h1>
               <p className="text-sm text-gray-500">
                 Privacy-preserving data visualization

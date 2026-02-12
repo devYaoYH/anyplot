@@ -1,4 +1,4 @@
-"""Sanctum Server - FastAPI orchestration layer for data visualization."""
+"""AnyPlot Server - FastAPI orchestration layer for data visualization."""
 
 from .models import VisualizeRequest, VisualizeResponse, HealthResponse
 from .sandbox import Sandbox, SandboxResult, SandboxError, SandboxConfig

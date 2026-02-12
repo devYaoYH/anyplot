@@ -1,7 +1,7 @@
 [project]
-name = "sanctum-server"
+name = "anyplot-server"
 version = "0.1.0"
-description = "FastAPI server and agent orchestration for Sanctum"
+description = "FastAPI server and agent orchestration for AnyPlot"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.109.0",

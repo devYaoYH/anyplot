@@ -1,6 +1,6 @@
-# Sanctum
+# AnyPlot
 
-A local-first, privacy-preserving data visualization platform. Sanctum enables users to create visualizations from sensitive datasets using Claude without exposing raw data to the LLM.
+A local-first, privacy-preserving data visualization platform. AnyPlot enables users to create visualizations from sensitive datasets using Claude without exposing raw data to the LLM.
 
 ## How It Works
 
@@ -15,8 +15,8 @@ CSV Upload → Local SQL Filtering → Privacy Layer → Claude → Code Executi
 ## Project Structure
 
 ```
-sanctum/
-├── mcp/        # Privacy layer (DP engine, schema masking, MCP protocol)
+anyplot/
+├── mcp/        # Sanctum privacy layer (DP engine, schema masking, MCP protocol)
 ├── server/     # FastAPI backend (agent orchestration, sandbox execution)
 ├── app/        # React frontend (data upload, SQL editor, visualization)
 └── tests/      # End-to-end tests
@@ -37,6 +37,8 @@ cd app && npm install && cd ..
 uv run uvicorn server.src.main:app --reload --port 8000
 cd app && npm run dev
 ```
+
+**Note on packages**: Generated visualization code runs in the same Python environment as the backend server. Install additional packages (e.g., `seaborn`, `plotly`, `scipy`) via `uv pip install` to make them available to generated code. The sandbox blocks only dangerous imports (`os`, `subprocess`, `socket`, etc.).
 
 ## Testing
 

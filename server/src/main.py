@@ -1,4 +1,4 @@
-"""FastAPI application for Sanctum visualization server.
+"""FastAPI application for AnyPlot visualization server.
 
 This module provides the HTTP API for the visualization service.
 """
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Sanctum Visualization API",
+    title="AnyPlot Visualization API",
     description="Privacy-preserving data visualization using LLM agents",
     version="0.1.0",
     lifespan=lifespan,

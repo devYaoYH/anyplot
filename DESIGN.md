@@ -1,4 +1,4 @@
-# DESIGN.md: Project Sanctum System Architecture
+# DESIGN.md: AnyPlot System Architecture
 
 **Status:** Approved
 **Date:** January 15, 2026
@@ -9,9 +9,9 @@
 
 ## 1. Executive Summary
 
-**Sanctum** is a local-first, privacy-preserving analytics platform. It enables users to leverage Large Language Model (LLM) agents (specifically Claude) to visualize sensitive datasets without ever exposing raw row-level data to external model providers.
+**AnyPlot** is a local-first, privacy-preserving analytics platform. It enables users to leverage Large Language Model (LLM) agents (specifically Claude) to visualize sensitive datasets without ever exposing raw row-level data to external model providers.
 
-The core architectural principle is the **"Privacy Firewall"**: a local Model Context Protocol (MCP) layer that intercepts agent inquiries, providing only differentially private statistics and masked schemas. The agent returns executable code, which is then run locally against the raw data in a controlled sandbox.
+The core architectural principle is the **"Privacy Firewall"**: a local Model Context Protocol (MCP) layer called **Sanctum** that intercepts agent inquiries, providing only differentially private statistics and masked schemas. The agent returns executable code, which is then run locally against the raw data in a controlled sandbox.
 
 ---
 
