@@ -16,7 +16,9 @@ interface VisualizationPanelProps {
   onConvert?: (targetMode: VizMode) => void;
   onCancel?: () => void;
   onNewVisualization?: () => void;
-  onAddToDashboard?: (vegaSpec: object, code: string) => void;
+  onAddToDashboard?: (vegaSpec: object, code: string, splitCharts: boolean) => void;
+  isCompositeSpec?: (spec: object) => boolean;
+  countChartsInSpec?: (spec: object) => number;
   dashboardChartCount?: number;
   dashboardContent?: React.ReactNode;
   isLoading: boolean;
@@ -44,6 +46,8 @@ export function VisualizationPanel({
   onCancel,
   onNewVisualization,
   onAddToDashboard,
+  isCompositeSpec,
+  countChartsInSpec,
   dashboardChartCount = 0,
   dashboardContent,
   isLoading,
@@ -114,11 +118,19 @@ export function VisualizationPanel({
     setVizMode(mode);
   };
 
-  const handleAddToDashboard = () => {
+  const handleAddToDashboard = (splitCharts: boolean) => {
     if (onAddToDashboard && altairResult?.vegaSpec && altairResult?.code) {
-      onAddToDashboard(altairResult.vegaSpec, altairResult.code);
+      onAddToDashboard(altairResult.vegaSpec, altairResult.code, splitCharts);
     }
   };
+
+  // Check if current spec is composite
+  const specIsComposite = altairResult?.vegaSpec && isCompositeSpec
+    ? isCompositeSpec(altairResult.vegaSpec)
+    : false;
+  const chartCountInSpec = altairResult?.vegaSpec && countChartsInSpec
+    ? countChartsInSpec(altairResult.vegaSpec)
+    : 1;
 
   // Determine which result to show based on active tab
   const currentResult = activeTab === 'interactive' ? altairResult : matplotlibResult;
@@ -405,13 +417,33 @@ export function VisualizationPanel({
                   </button>
                 )}
                 {onAddToDashboard && (
-                  <button
-                    onClick={handleAddToDashboard}
-                    disabled={isLoading}
-                    className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Add to Dashboard
-                  </button>
+                  specIsComposite ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleAddToDashboard(true)}
+                        disabled={isLoading}
+                        className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Split & Add ({chartCountInSpec} charts)
+                      </button>
+                      <button
+                        onClick={() => handleAddToDashboard(false)}
+                        disabled={isLoading}
+                        className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                        title="Add as single combined chart"
+                      >
+                        Add Combined
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleAddToDashboard(false)}
+                      disabled={isLoading}
+                      className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Add to Dashboard
+                    </button>
+                  )
                 )}
               </>
             )}

@@ -54,6 +54,7 @@ function App() {
     cancelVisualization,
     clearResult,
     clearSession,
+    restoreResults,
   } = useVisualize();
 
   const {
@@ -70,7 +71,9 @@ function App() {
     charts: dashboardCharts,
     filters: dashboardFilters,
     allFilterableFields,
-    addChart: addChartToDashboard,
+    addChartsFromSpec,
+    isCompositeSpec,
+    countChartsInSpec,
     removeChart: removeChartFromDashboard,
     updateLayout: updateDashboardLayout,
     addFilter: addDashboardFilter,
@@ -136,9 +139,17 @@ function App() {
         setLogSnapshots(currentSession.log_snapshots.map(apiToUiSnapshot));
       }
 
+      // Restore visualization results
+      if (currentSession.matplotlib_result || currentSession.altair_result) {
+        restoreResults(
+          currentSession.matplotlib_result,
+          currentSession.altair_result
+        );
+      }
+
       setIsRestoringSession(false);
     }
-  }, [currentSession?.id, sqliteReady]);
+  }, [currentSession?.id, sqliteReady, restoreResults]);
 
   // Save session when state changes (debounced via saveSession)
   const saveCurrentState = useCallback(() => {
@@ -262,10 +273,10 @@ function App() {
   );
 
   const handleAddToDashboard = useCallback(
-    (vegaSpec: object, code: string) => {
-      addChartToDashboard(vegaSpec, code);
+    (vegaSpec: object, code: string, splitCharts: boolean) => {
+      addChartsFromSpec(vegaSpec, code, splitCharts);
     },
-    [addChartToDashboard]
+    [addChartsFromSpec]
   );
 
   // Create or update snapshot when visualization completes or errors
@@ -471,6 +482,8 @@ function App() {
               onNewVisualization={handleNewVisualization}
               onCancel={cancelVisualization}
               onAddToDashboard={handleAddToDashboard}
+              isCompositeSpec={isCompositeSpec}
+              countChartsInSpec={countChartsInSpec}
               dashboardChartCount={dashboardCharts.length}
               dashboardContent={
                 <InteractiveDashboard

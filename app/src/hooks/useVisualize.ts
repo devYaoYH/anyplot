@@ -23,6 +23,7 @@ import type {
   ToolCallLog,
   VizMode,
   VizType,
+  VisualizationResult,
 } from '../lib/api';
 
 export interface ProgressStatus {
@@ -62,6 +63,7 @@ export interface UseVisualizeReturn {
   cancelVisualization: () => void;
   clearResult: () => void;
   clearSession: () => void;
+  restoreResults: (matplotlib: VisualizationResult | null, altair: VisualizationResult | null) => void;
 }
 
 export function useVisualize(): UseVisualizeReturn {
@@ -488,6 +490,28 @@ export function useVisualize(): UseVisualizeReturn {
     setSession(null);
   }, []);
 
+  const restoreResults = useCallback((
+    savedMatplotlib: VisualizationResult | null,
+    savedAltair: VisualizationResult | null
+  ) => {
+    if (savedMatplotlib) {
+      setMatplotlibResult({
+        image: savedMatplotlib.image,
+        vegaSpec: savedMatplotlib.vega_spec,
+        vizType: savedMatplotlib.viz_type,
+        code: savedMatplotlib.code || '',
+      });
+    }
+    if (savedAltair) {
+      setAltairResult({
+        image: savedAltair.image,
+        vegaSpec: savedAltair.vega_spec,
+        vizType: savedAltair.viz_type,
+        code: savedAltair.code || '',
+      });
+    }
+  }, []);
+
   return {
     isLoading,
     error,
@@ -504,5 +528,6 @@ export function useVisualize(): UseVisualizeReturn {
     cancelVisualization,
     clearResult,
     clearSession,
+    restoreResults,
   };
 }

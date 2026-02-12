@@ -18,7 +18,7 @@ from pydantic import BaseModel
 class AgentConfig:
     """Configuration for the visualization agent."""
 
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-sonnet-4-5-20250929"
     max_tokens: int = 4096
     temperature: float = 0.0
     max_tool_calls: int = 10

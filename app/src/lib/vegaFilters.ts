@@ -6,17 +6,27 @@
 import type { DashboardFilter, FilterableFieldInfo } from '../types/dashboard';
 
 interface VegaLiteSpec {
+  $schema?: string;
   data?: {
     values?: Record<string, unknown>[];
     [key: string]: unknown;
   };
   encoding?: Record<string, { field?: string; [key: string]: unknown }>;
+  mark?: string | object;
   layer?: VegaLiteSpec[];
   hconcat?: VegaLiteSpec[];
   vconcat?: VegaLiteSpec[];
   concat?: VegaLiteSpec[];
   transform?: unknown[];
+  title?: string | object;
+  width?: number | string;
+  height?: number | string;
   [key: string]: unknown;
+}
+
+export interface ExtractedChart {
+  spec: object;
+  title: string;
 }
 
 /**
@@ -210,4 +220,131 @@ export function collectAllFilterableFields(
     chart.filterableFields.forEach((field) => allFields.add(field));
   });
   return Array.from(allFields).sort();
+}
+
+/**
+ * Checks if a Vega-Lite spec is a composite spec (contains multiple charts).
+ */
+export function isCompositeSpec(spec: object): boolean {
+  const vegaSpec = spec as VegaLiteSpec;
+  return !!(
+    vegaSpec.hconcat ||
+    vegaSpec.vconcat ||
+    vegaSpec.concat ||
+    (vegaSpec.layer && vegaSpec.layer.length > 1)
+  );
+}
+
+/**
+ * Gets the title from a Vega-Lite spec or sub-spec.
+ */
+function getSpecTitle(spec: VegaLiteSpec, index: number, prefix: string): string {
+  if (spec.title) {
+    if (typeof spec.title === 'string') {
+      return spec.title;
+    }
+    if (typeof spec.title === 'object' && 'text' in spec.title) {
+      return String(spec.title.text);
+    }
+  }
+  return `${prefix} ${index + 1}`;
+}
+
+/**
+ * Creates a standalone spec from a sub-spec, inheriting shared properties.
+ */
+function createStandaloneSpec(
+  subSpec: VegaLiteSpec,
+  parentSpec: VegaLiteSpec
+): object {
+  const standalone: VegaLiteSpec = { ...subSpec };
+
+  // Inherit $schema if not present
+  if (!standalone.$schema && parentSpec.$schema) {
+    standalone.$schema = parentSpec.$schema;
+  }
+
+  // Inherit data if sub-spec doesn't have its own
+  if (!standalone.data && parentSpec.data) {
+    standalone.data = parentSpec.data;
+  }
+
+  // Inherit transform if sub-spec doesn't have its own
+  if (!standalone.transform && parentSpec.transform) {
+    standalone.transform = parentSpec.transform;
+  }
+
+  return standalone;
+}
+
+/**
+ * Extracts individual charts from a composite Vega-Lite spec.
+ * Returns an array of standalone specs with titles.
+ * If the spec is not composite, returns the original spec in an array.
+ */
+export function extractIndividualCharts(spec: object): ExtractedChart[] {
+  const vegaSpec = spec as VegaLiteSpec;
+  const charts: ExtractedChart[] = [];
+
+  // Handle horizontal concatenation
+  if (vegaSpec.hconcat && vegaSpec.hconcat.length > 0) {
+    vegaSpec.hconcat.forEach((subSpec, index) => {
+      charts.push({
+        spec: createStandaloneSpec(subSpec, vegaSpec),
+        title: getSpecTitle(subSpec, index, 'Chart'),
+      });
+    });
+    return charts;
+  }
+
+  // Handle vertical concatenation
+  if (vegaSpec.vconcat && vegaSpec.vconcat.length > 0) {
+    vegaSpec.vconcat.forEach((subSpec, index) => {
+      charts.push({
+        spec: createStandaloneSpec(subSpec, vegaSpec),
+        title: getSpecTitle(subSpec, index, 'Chart'),
+      });
+    });
+    return charts;
+  }
+
+  // Handle generic concatenation
+  if (vegaSpec.concat && vegaSpec.concat.length > 0) {
+    vegaSpec.concat.forEach((subSpec, index) => {
+      charts.push({
+        spec: createStandaloneSpec(subSpec, vegaSpec),
+        title: getSpecTitle(subSpec, index, 'Chart'),
+      });
+    });
+    return charts;
+  }
+
+  // Handle layers - each layer becomes a separate chart
+  if (vegaSpec.layer && vegaSpec.layer.length > 1) {
+    vegaSpec.layer.forEach((subSpec, index) => {
+      charts.push({
+        spec: createStandaloneSpec(subSpec, vegaSpec),
+        title: getSpecTitle(subSpec, index, 'Layer'),
+      });
+    });
+    return charts;
+  }
+
+  // Not composite - return as single chart
+  const title = getSpecTitle(vegaSpec, 0, 'Chart');
+  return [{ spec, title }];
+}
+
+/**
+ * Counts the number of individual charts in a spec.
+ */
+export function countChartsInSpec(spec: object): number {
+  const vegaSpec = spec as VegaLiteSpec;
+
+  if (vegaSpec.hconcat) return vegaSpec.hconcat.length;
+  if (vegaSpec.vconcat) return vegaSpec.vconcat.length;
+  if (vegaSpec.concat) return vegaSpec.concat.length;
+  if (vegaSpec.layer && vegaSpec.layer.length > 1) return vegaSpec.layer.length;
+
+  return 1;
 }

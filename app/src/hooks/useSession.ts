@@ -144,14 +144,24 @@ export function useSession(): UseSessionReturn {
       try {
         const updated = await updateSession(sessionId, updates);
         setCurrentSession(updated);
-        await refreshSessions();
+        // Optimistic update: update session metadata in list without refetching/reordering
+        setSessions(prev => prev.map(s =>
+          s.id === updated.id
+            ? {
+                ...s,
+                updated_at: updated.updated_at,
+                row_count: updated.raw_data.length,
+                snapshot_count: updated.log_snapshots.length,
+              }
+            : s
+        ));
       } catch (err) {
         if (err instanceof ApiError) {
           console.error('Failed to save session:', err.detail || err.message);
         }
       }
     }, 500);
-  }, [currentSession, createNewSession, refreshSessions]);
+  }, [currentSession, createNewSession]);
 
   const deleteCurrentSession = useCallback(async () => {
     if (!currentSession) return;

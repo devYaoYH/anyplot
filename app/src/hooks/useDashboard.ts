@@ -10,6 +10,9 @@ import {
   applyFiltersToSpec,
   collectAllFilterableFields,
   getApplicableFilters,
+  extractIndividualCharts,
+  isCompositeSpec,
+  countChartsInSpec,
 } from '../lib/vegaFilters';
 
 const GRID_CONFIG = {
@@ -24,6 +27,9 @@ export interface UseDashboardReturn {
   filters: DashboardFilter[];
   allFilterableFields: string[];
   addChart: (vegaSpec: object, code: string, title?: string) => void;
+  addChartsFromSpec: (vegaSpec: object, code: string, splitCharts: boolean) => void;
+  isCompositeSpec: (spec: object) => boolean;
+  countChartsInSpec: (spec: object) => number;
   removeChart: (id: string) => void;
   updateLayout: (layouts: Layout[]) => void;
   addFilter: (filter: Omit<DashboardFilter, 'id'>) => void;
@@ -82,31 +88,81 @@ export function useDashboard(): UseDashboardReturn {
 
   const addChart = useCallback(
     (vegaSpec: object, code: string, title?: string) => {
-      const id = crypto.randomUUID().slice(0, 8);
-      const filterableFields = extractFilterableFields(vegaSpec);
-      const position = getNextPosition(charts);
+      setCharts((prev) => {
+        const id = crypto.randomUUID().slice(0, 8);
+        const filterableFields = extractFilterableFields(vegaSpec);
+        const position = getNextPosition(prev);
 
-      const newChart: DashboardChart = {
-        id,
-        title: title || `Chart ${charts.length + 1}`,
-        vegaSpec,
-        code,
-        createdAt: new Date(),
-        filterableFields,
-        layout: {
-          i: id,
-          x: position.x,
-          y: position.y,
-          w: GRID_CONFIG.defaultSize.w,
-          h: GRID_CONFIG.defaultSize.h,
-          minW: GRID_CONFIG.minSize.w,
-          minH: GRID_CONFIG.minSize.h,
-        },
-      };
+        const newChart: DashboardChart = {
+          id,
+          title: title || `Chart ${prev.length + 1}`,
+          vegaSpec,
+          code,
+          createdAt: new Date(),
+          filterableFields,
+          layout: {
+            i: id,
+            x: position.x,
+            y: position.y,
+            w: GRID_CONFIG.defaultSize.w,
+            h: GRID_CONFIG.defaultSize.h,
+            minW: GRID_CONFIG.minSize.w,
+            minH: GRID_CONFIG.minSize.h,
+          },
+        };
 
-      setCharts((prev) => [...prev, newChart]);
+        return [...prev, newChart];
+      });
     },
-    [charts, getNextPosition]
+    [getNextPosition]
+  );
+
+  const addChartsFromSpec = useCallback(
+    (vegaSpec: object, code: string, splitCharts: boolean) => {
+      if (!splitCharts) {
+        // Add as single chart
+        addChart(vegaSpec, code);
+        return;
+      }
+
+      // Extract and add individual charts
+      const extractedCharts = extractIndividualCharts(vegaSpec);
+
+      setCharts((prev) => {
+        const newCharts: DashboardChart[] = [];
+        let currentCharts = [...prev];
+
+        extractedCharts.forEach((extracted, index) => {
+          const id = crypto.randomUUID().slice(0, 8);
+          const filterableFields = extractFilterableFields(extracted.spec);
+          const position = getNextPosition(currentCharts);
+
+          const newChart: DashboardChart = {
+            id,
+            title: extracted.title,
+            vegaSpec: extracted.spec,
+            code: `// Extracted from composite chart (${index + 1}/${extractedCharts.length})\n${code}`,
+            createdAt: new Date(),
+            filterableFields,
+            layout: {
+              i: id,
+              x: position.x,
+              y: position.y,
+              w: GRID_CONFIG.defaultSize.w,
+              h: GRID_CONFIG.defaultSize.h,
+              minW: GRID_CONFIG.minSize.w,
+              minH: GRID_CONFIG.minSize.h,
+            },
+          };
+
+          newCharts.push(newChart);
+          currentCharts = [...currentCharts, newChart];
+        });
+
+        return [...prev, ...newCharts];
+      });
+    },
+    [addChart, getNextPosition]
   );
 
   const removeChart = useCallback((id: string) => {
@@ -174,6 +230,9 @@ export function useDashboard(): UseDashboardReturn {
     filters,
     allFilterableFields,
     addChart,
+    addChartsFromSpec,
+    isCompositeSpec,
+    countChartsInSpec,
     removeChart,
     updateLayout,
     addFilter,
