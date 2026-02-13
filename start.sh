@@ -19,8 +19,7 @@ echo "Starting AnyPlot..."
 # Start backend server
 echo "Starting backend server on http://localhost:8000"
 cd "$SCRIPT_DIR/server"
-source .venv/bin/activate
-uvicorn src.main:app --reload --port 8000 &
+uv run uvicorn src.main:app --reload --port 8000 &
 SERVER_PID=$!
 
 # Start frontend dev server
