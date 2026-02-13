@@ -2,6 +2,8 @@
 
 A local-first, privacy-preserving data visualization platform. AnyPlot enables users to create visualizations from sensitive datasets using Claude without exposing raw data to the LLM.
 
+**[Learn more](https://devyaoyh.github.io/anyplot)**
+
 ## How It Works
 
 ```
