@@ -7,22 +7,30 @@
   <meta name="description" content="Create beautiful visualizations from sensitive datasets using AI. Your data never leaves your machine.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,800;9..144,900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0a0a0f;
-      --bg-card: #12121a;
-      --bg-card-hover: #1a1a26;
-      --text: #e8e8ed;
-      --text-muted: #8888a0;
-      --accent: #6366f1;
-      --accent-light: #818cf8;
-      --accent-glow: rgba(99, 102, 241, 0.15);
-      --green: #34d399;
-      --amber: #fbbf24;
-      --rose: #f472b6;
-      --border: rgba(255, 255, 255, 0.06);
-      --radius: 16px;
+      --bg: #faf7f2;
+      --bg-warm: #f3ede4;
+      --bg-card: #ffffff;
+      --bg-card-hover: #fefdfb;
+      --text: #3a3530;
+      --text-muted: #8a8279;
+      --accent: #7c6faa;
+      --accent-light: #6b5d99;
+      --accent-bg: #ede8f5;
+      --green: #6a9e78;
+      --green-bg: #e4f0e8;
+      --amber: #c49652;
+      --amber-bg: #f5eddf;
+      --rose: #c47a7a;
+      --rose-bg: #f5e4e4;
+      --blue: #6a8fae;
+      --blue-bg: #e0ecf4;
+      --orange: #c4895a;
+      --orange-bg: #f5ead8;
+      --border: #e8e2d9;
+      --radius: 14px;
     }
 
     * {
@@ -37,21 +45,16 @@
     }
 
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       background: var(--bg);
       color: var(--text);
       line-height: 1.6;
       overflow-x: hidden;
     }
 
-    /* ---- Noise texture overlay ---- */
+    /* ---- No noise overlay for light theme ---- */
     body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-      pointer-events: none;
-      z-index: 0;
+      display: none;
     }
 
     /* ---- Nav ---- */
@@ -65,20 +68,22 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: rgba(10, 10, 15, 0.8);
+      background: rgba(250, 247, 242, 0.85);
       backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--border);
       transition: background 0.3s;
     }
 
     .nav-logo {
-      font-size: 1.4rem;
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: 1.5rem;
       font-weight: 800;
-      background: linear-gradient(135deg, var(--accent-light), var(--rose));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: var(--accent);
       letter-spacing: -0.02em;
+      -webkit-text-fill-color: var(--accent);
+      background: none;
+      -webkit-background-clip: unset;
+      background-clip: unset;
     }
 
     .nav-links {
@@ -110,7 +115,7 @@
 
     .nav-cta:hover {
       transform: translateY(-1px);
-      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+      box-shadow: 0 4px 16px rgba(124, 111, 170, 0.25);
     }
 
     .nav-hamburger {
@@ -154,32 +159,41 @@
       overflow: hidden;
     }
 
-    /* Gradient orbs */
-    .hero::before {
-      content: '';
-      position: absolute;
-      width: 600px;
-      height: 600px;
-      background: radial-gradient(circle, rgba(99, 102, 241, 0.15), transparent 70%);
-      top: -100px;
-      left: -100px;
-      animation: float 8s ease-in-out infinite;
-    }
-
+    .hero::before,
     .hero::after {
-      content: '';
-      position: absolute;
-      width: 500px;
-      height: 500px;
-      background: radial-gradient(circle, rgba(244, 114, 182, 0.1), transparent 70%);
-      bottom: -50px;
-      right: -100px;
-      animation: float 10s ease-in-out infinite reverse;
+      display: none;
     }
 
-    @keyframes float {
+    /* ---- Floating background circles ---- */
+    .bg-circles {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .bg-circle {
+      position: absolute;
+      border-radius: 50%;
+      opacity: 0.45;
+    }
+
+    @keyframes float-1 {
       0%, 100% { transform: translate(0, 0); }
-      50% { transform: translate(30px, -30px); }
+      50% { transform: translate(25px, -30px); }
+    }
+    @keyframes float-2 {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(-20px, 25px); }
+    }
+    @keyframes float-3 {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(30px, 20px); }
+    }
+    @keyframes float-4 {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(-25px, -20px); }
     }
 
     .hero-content {
@@ -193,11 +207,11 @@
       align-items: center;
       gap: 8px;
       padding: 6px 16px;
-      background: var(--accent-glow);
-      border: 1px solid rgba(99, 102, 241, 0.2);
+      background: var(--accent-bg);
+      border: 1px solid #d5cee6;
       border-radius: 100px;
       font-size: 0.85rem;
-      color: var(--accent-light);
+      color: var(--accent);
       font-weight: 500;
       margin-bottom: 24px;
     }
@@ -216,22 +230,25 @@
     }
 
     .hero h1 {
-      font-size: clamp(3rem, 7vw, 5rem);
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: clamp(3rem, 7vw, 4.5rem);
       font-weight: 900;
-      line-height: 1.05;
-      letter-spacing: -0.03em;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
       margin-bottom: 24px;
+      color: var(--text);
     }
 
     .hero h1 .gradient {
-      background: linear-gradient(135deg, #818cf8, #c084fc, #f472b6);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: var(--accent);
+      -webkit-text-fill-color: var(--accent);
+      background: none;
+      -webkit-background-clip: unset;
+      background-clip: unset;
     }
 
     .hero p {
-      font-size: 1.25rem;
+      font-size: 1.2rem;
       color: var(--text-muted);
       max-width: 600px;
       margin: 0 auto 40px;
@@ -250,7 +267,7 @@
       align-items: center;
       gap: 8px;
       padding: 14px 28px;
-      border-radius: 12px;
+      border-radius: 10px;
       font-size: 1rem;
       font-weight: 600;
       text-decoration: none;
@@ -261,24 +278,24 @@
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      background: var(--accent);
       color: white;
-      box-shadow: 0 4px 24px rgba(99, 102, 241, 0.3);
+      box-shadow: 0 2px 12px rgba(124, 111, 170, 0.2);
     }
 
     .btn-primary:hover {
       transform: translateY(-2px);
-      box-shadow: 0 8px 32px rgba(99, 102, 241, 0.5);
+      box-shadow: 0 6px 20px rgba(124, 111, 170, 0.3);
     }
 
     .btn-secondary {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--bg-card);
       color: var(--text);
       border: 1px solid var(--border);
     }
 
     .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--bg-warm);
       transform: translateY(-2px);
     }
 
@@ -309,14 +326,14 @@
 
     .pipeline-step:hover {
       border-color: var(--accent);
-      color: var(--accent-light);
-      background: var(--accent-glow);
+      color: var(--accent);
+      background: var(--accent-bg);
     }
 
     .pipeline-arrow {
       color: var(--text-muted);
       font-size: 1.2rem;
-      opacity: 0.4;
+      opacity: 0.35;
     }
 
     /* ---- Screenshot Hero ---- */
@@ -327,13 +344,12 @@
     .screenshot-frame {
       max-width: 1100px;
       margin: 0 auto;
-      border-radius: 20px;
+      border-radius: 16px;
       overflow: hidden;
       border: 1px solid var(--border);
       box-shadow:
-        0 4px 6px rgba(0,0,0,0.1),
-        0 20px 60px rgba(0,0,0,0.3),
-        0 0 100px rgba(99, 102, 241, 0.08);
+        0 2px 4px rgba(0,0,0,0.04),
+        0 12px 40px rgba(0,0,0,0.08);
       position: relative;
     }
 
@@ -341,9 +357,9 @@
       content: '';
       position: absolute;
       inset: -1px;
-      border-radius: 20px;
+      border-radius: 16px;
       padding: 1px;
-      background: linear-gradient(135deg, rgba(99,102,241,0.3), transparent, rgba(244,114,182,0.2));
+      background: linear-gradient(135deg, var(--accent-bg), transparent, var(--rose-bg));
       -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
       -webkit-mask-composite: xor;
       mask-composite: exclude;
@@ -362,19 +378,21 @@
     }
 
     .section-label {
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       font-weight: 600;
-      color: var(--accent-light);
+      color: var(--accent);
       text-transform: uppercase;
-      letter-spacing: 0.1em;
+      letter-spacing: 0.12em;
       margin-bottom: 12px;
     }
 
     .section-header h2 {
-      font-size: clamp(2rem, 4vw, 3rem);
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: clamp(2rem, 4vw, 2.8rem);
       font-weight: 800;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.01em;
       margin-bottom: 16px;
+      color: var(--text);
     }
 
     .section-header p {
@@ -411,16 +429,17 @@
       top: 0;
       left: 0;
       right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      height: 3px;
+      background: var(--accent);
       opacity: 0;
       transition: opacity 0.35s;
     }
 
     .feature-card:hover {
       background: var(--bg-card-hover);
-      border-color: rgba(99, 102, 241, 0.15);
+      border-color: #d5cee6;
       transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.06);
     }
 
     .feature-card:hover::before {
@@ -438,14 +457,15 @@
       margin-bottom: 20px;
     }
 
-    .feature-icon.purple { background: rgba(99, 102, 241, 0.15); }
-    .feature-icon.green  { background: rgba(52, 211, 153, 0.15); }
-    .feature-icon.amber  { background: rgba(251, 191, 36, 0.15); }
-    .feature-icon.rose   { background: rgba(244, 114, 182, 0.15); }
-    .feature-icon.blue   { background: rgba(56, 189, 248, 0.15); }
-    .feature-icon.orange { background: rgba(251, 146, 60, 0.15); }
+    .feature-icon.purple { background: var(--accent-bg); }
+    .feature-icon.green  { background: var(--green-bg); }
+    .feature-icon.amber  { background: var(--amber-bg); }
+    .feature-icon.rose   { background: var(--rose-bg); }
+    .feature-icon.blue   { background: var(--blue-bg); }
+    .feature-icon.orange { background: var(--orange-bg); }
 
     .feature-card h3 {
+      font-family: 'Fraunces', Georgia, serif;
       font-size: 1.15rem;
       font-weight: 700;
       margin-bottom: 8px;
@@ -488,12 +508,13 @@
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.1em;
-      color: var(--accent-light);
+      color: var(--accent);
       margin-bottom: 12px;
     }
 
     .showcase-text h3 {
-      font-size: 2rem;
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: 1.9rem;
       font-weight: 800;
       letter-spacing: -0.02em;
       margin-bottom: 16px;
@@ -521,22 +542,22 @@
       font-family: 'JetBrains Mono', monospace;
     }
 
-    .tag-purple { background: rgba(99,102,241,0.12); color: var(--accent-light); }
-    .tag-green  { background: rgba(52,211,153,0.12); color: var(--green); }
-    .tag-amber  { background: rgba(251,191,36,0.12); color: var(--amber); }
-    .tag-rose   { background: rgba(244,114,182,0.12); color: var(--rose); }
+    .tag-purple { background: var(--accent-bg); color: var(--accent); }
+    .tag-green  { background: var(--green-bg); color: var(--green); }
+    .tag-amber  { background: var(--amber-bg); color: var(--amber); }
+    .tag-rose   { background: var(--rose-bg); color: var(--rose); }
 
     .showcase-image {
       border-radius: var(--radius);
       overflow: hidden;
       border: 1px solid var(--border);
-      box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
       transition: transform 0.4s, box-shadow 0.4s;
     }
 
     .showcase-image:hover {
       transform: scale(1.02);
-      box-shadow: 0 12px 60px rgba(0,0,0,0.4);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
     }
 
     .showcase-image img {
@@ -569,7 +590,7 @@
       width: 48px;
       height: 48px;
       border-radius: 50%;
-      background: linear-gradient(135deg, var(--accent), #7c3aed);
+      background: var(--accent);
       color: white;
       display: inline-flex;
       align-items: center;
@@ -580,6 +601,7 @@
     }
 
     .step h3 {
+      font-family: 'Fraunces', Georgia, serif;
       font-size: 1.2rem;
       font-weight: 700;
       margin-bottom: 8px;
@@ -598,7 +620,7 @@
       right: -16px;
       width: 32px;
       height: 2px;
-      background: linear-gradient(90deg, var(--accent), transparent);
+      background: var(--border);
       z-index: 2;
     }
 
@@ -610,7 +632,7 @@
     .code-block {
       max-width: 700px;
       margin: 0 auto;
-      background: #0d0d14;
+      background: #2d2a35;
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
@@ -621,7 +643,7 @@
       align-items: center;
       gap: 8px;
       padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
     }
 
     .code-dot {
@@ -630,23 +652,23 @@
       border-radius: 50%;
     }
 
-    .code-dot.red    { background: #ff5f57; }
-    .code-dot.yellow { background: #febc2e; }
-    .code-dot.green  { background: #28c840; }
+    .code-dot.red    { background: #e8907a; }
+    .code-dot.yellow { background: #e8c77a; }
+    .code-dot.green  { background: #7abf8e; }
 
     .code-body {
       padding: 24px;
       font-family: 'JetBrains Mono', monospace;
       font-size: 0.85rem;
       line-height: 1.8;
-      color: var(--text-muted);
+      color: #b8b0c8;
       overflow-x: auto;
     }
 
-    .code-body .comment { color: #4a5568; }
-    .code-body .cmd { color: var(--green); }
-    .code-body .flag { color: var(--amber); }
-    .code-body .path { color: var(--accent-light); }
+    .code-body .comment { color: #6b6478; }
+    .code-body .cmd { color: #7abf8e; }
+    .code-body .flag { color: #e8c77a; }
+    .code-body .path { color: #b0a0d8; }
 
     .code-line {
       display: block;
@@ -665,13 +687,13 @@
       position: absolute;
       top: 12px;
       right: 12px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: #8a8098;
       border-radius: 8px;
       padding: 6px 12px;
       font-size: 0.75rem;
-      font-family: 'Inter', sans-serif;
+      font-family: 'DM Sans', sans-serif;
       font-weight: 500;
       cursor: pointer;
       display: flex;
@@ -682,14 +704,14 @@
     }
 
     .copy-btn:hover {
-      background: rgba(255, 255, 255, 0.12);
-      color: var(--text);
+      background: rgba(255, 255, 255, 0.14);
+      color: #c0b8d0;
     }
 
     .copy-btn.copied {
-      color: var(--green);
-      border-color: rgba(52, 211, 153, 0.3);
-      background: rgba(52, 211, 153, 0.1);
+      color: #7abf8e;
+      border-color: rgba(122, 191, 142, 0.3);
+      background: rgba(122, 191, 142, 0.1);
     }
 
     /* ---- CTA ---- */
@@ -700,14 +722,7 @@
     }
 
     .cta::before {
-      content: '';
-      position: absolute;
-      width: 800px;
-      height: 400px;
-      background: radial-gradient(ellipse, rgba(99, 102, 241, 0.08), transparent 70%);
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
+      display: none;
     }
 
     .cta-content {
@@ -716,10 +731,12 @@
     }
 
     .cta h2 {
-      font-size: clamp(2rem, 4vw, 3.5rem);
+      font-family: 'Fraunces', Georgia, serif;
+      font-size: clamp(2rem, 4vw, 3.2rem);
       font-weight: 900;
-      letter-spacing: -0.03em;
+      letter-spacing: -0.02em;
       margin-bottom: 16px;
+      color: var(--text);
     }
 
     .cta p {
@@ -741,7 +758,7 @@
     }
 
     footer a {
-      color: var(--accent-light);
+      color: var(--accent);
       text-decoration: none;
     }
 
@@ -809,7 +826,7 @@
         top: 100%;
         left: 0;
         right: 0;
-        background: rgba(10, 10, 15, 0.95);
+        background: rgba(250, 247, 242, 0.95);
         backdrop-filter: blur(20px);
         padding: 16px 32px;
         border-bottom: 1px solid var(--border);
@@ -833,7 +850,7 @@
       position: fixed;
       inset: 0;
       z-index: 1000;
-      background: rgba(0, 0, 0, 0.9);
+      background: rgba(58, 53, 48, 0.85);
       backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
@@ -853,21 +870,34 @@
       max-width: 92vw;
       max-height: 90vh;
       border-radius: 12px;
-      box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 20px 80px rgba(0, 0, 0, 0.3);
     }
   </style>
 </head>
 <body>
+
+  <!-- Floating background circles -->
+  <div class="bg-circles">
+    <div class="bg-circle" style="width:420px;height:420px;background:var(--accent-bg);top:2%;left:-5%;animation:float-1 9s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:300px;height:300px;background:var(--rose-bg);top:8%;right:-3%;animation:float-2 11s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:250px;height:250px;background:var(--green-bg);top:22%;left:15%;animation:float-3 13s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:350px;height:350px;background:var(--amber-bg);top:32%;right:8%;animation:float-4 10s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:280px;height:280px;background:var(--blue-bg);top:48%;left:-4%;animation:float-2 12s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:380px;height:380px;background:var(--accent-bg);top:55%;right:-6%;animation:float-1 14s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:220px;height:220px;background:var(--rose-bg);top:68%;left:20%;animation:float-4 9s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:320px;height:320px;background:var(--green-bg);top:78%;right:12%;animation:float-3 11s ease-in-out infinite"></div>
+    <div class="bg-circle" style="width:260px;height:260px;background:var(--amber-bg);top:90%;left:5%;animation:float-1 10s ease-in-out infinite"></div>
+  </div>
 
   <!-- Nav -->
   <nav id="nav">
     <span class="nav-logo">AnyPlot</span>
     <ul class="nav-links">
       <li><a href="#features">Features</a></li>
-      <li><a href="#how-it-works">How It Works</a></li>
       <li><a href="#showcase">See It In Action</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
       <li><a href="#quickstart">Get Started</a></li>
-      <li><a href="https://github.com/yaoyiheng/anyplot" class="nav-cta" target="_blank">GitHub</a></li>
+      <li><a href="https://github.com/devyaoyh/anyplot" class="nav-cta" target="_blank">GitHub</a></li>
     </ul>
     <button class="nav-hamburger" onclick="document.getElementById('nav').classList.toggle('open')" aria-label="Toggle navigation">
       <span></span><span></span><span></span>
@@ -890,7 +920,7 @@
         without your raw data ever leaving your machine.
       </p>
       <div class="hero-buttons">
-        <a href="https://github.com/yaoyiheng/anyplot" class="btn btn-primary" target="_blank">
+        <a href="https://github.com/devyaoyh/anyplot" class="btn btn-primary" target="_blank">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
           View on GitHub
         </a>
@@ -938,7 +968,7 @@
       <div class="features-grid">
         <div class="feature-card reveal">
           <div class="feature-icon purple">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7c6faa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
           </div>
           <h3>In-Browser SQL</h3>
           <p>Your CSV is loaded into a local SQLite WASM database. Query, filter, and reshape your data with full SQL &mdash; entirely in your browser.</p>
@@ -946,7 +976,7 @@
 
         <div class="feature-card reveal">
           <div class="feature-icon green">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a9e78" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Privacy Firewall</h3>
           <p>Column names are masked and data statistics use differential privacy. Claude never sees your actual data &mdash; just anonymized schema and noisy aggregates.</p>
@@ -954,7 +984,7 @@
 
         <div class="feature-card reveal">
           <div class="feature-icon amber">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c49652" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           </div>
           <h3>AI-Powered Charts</h3>
           <p>Describe what you want to see in plain English. Claude generates publication-quality matplotlib plots or interactive Vega-Lite visualizations via Altair.</p>
@@ -962,7 +992,7 @@
 
         <div class="feature-card reveal">
           <div class="feature-icon rose">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c47a7a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           </div>
           <h3>Interactive Visualizations</h3>
           <p>Switch between static Python plots and interactive Vega-Lite charts with hover tooltips, zoom, and pan &mdash; powered by Altair.</p>
@@ -970,7 +1000,7 @@
 
         <div class="feature-card reveal">
           <div class="feature-icon blue">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a8fae" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           </div>
           <h3>Conversational Refinement</h3>
           <p>Not quite right? Send an adjustment in natural language. The AI iterates on your visualization, fixing errors and refining details on the fly.</p>
@@ -978,7 +1008,7 @@
 
         <div class="feature-card reveal">
           <div class="feature-icon orange">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c4895a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </div>
           <h3>Sandboxed Execution</h3>
           <p>Generated code runs in an isolated subprocess with dangerous imports blocked. Explore fearlessly &mdash; the sandbox keeps your system safe.</p>
@@ -1171,7 +1201,7 @@
         </div>
         <div class="code-body">
           <span class="code-line"><span class="comment"># Clone the repo</span></span>
-          <span class="code-line"><span class="cmd">git clone</span> <span class="path">https://github.com/yaoyiheng/anyplot.git</span></span>
+          <span class="code-line"><span class="cmd">git clone</span> <span class="path">https://github.com/devyaoyh/anyplot.git</span></span>
           <span class="code-line"><span class="cmd">cd</span> <span class="path">anyplot</span></span>
           <span class="code-line blank"></span>
           <span class="code-line"><span class="comment"># Setup backend</span></span>
@@ -1194,7 +1224,7 @@
         <h2>Ready to explore your data?</h2>
         <p>Open source, local-first, and built for researchers who take privacy seriously.</p>
         <div class="hero-buttons">
-          <a href="https://github.com/yaoyiheng/anyplot" class="btn btn-primary" target="_blank">
+          <a href="https://github.com/devyaoyh/anyplot" class="btn btn-primary" target="_blank">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
             Star on GitHub
           </a>
@@ -1209,12 +1239,12 @@
   <!-- Footer -->
   <footer>
     <p>
-      Built with care by <a href="https://github.com/yaoyiheng" target="_blank">Yiheng Yao</a>.
+      Built with care by <a href="https://github.com/devyaoyh" target="_blank">Yiheng Yao</a>.
       Powered by <a href="https://www.anthropic.com/claude" target="_blank">Claude</a>.
       <br>
-      <a href="https://github.com/yaoyiheng/anyplot" target="_blank">GitHub</a> &middot;
-      <a href="https://github.com/yaoyiheng/anyplot/blob/main/DESIGN.md" target="_blank">Architecture</a> &middot;
-      <a href="https://github.com/yaoyiheng/anyplot/blob/main/LICENSE" target="_blank">License</a>
+      <a href="https://github.com/devyaoyh/anyplot" target="_blank">GitHub</a> &middot;
+      <a href="https://github.com/devyaoyh/anyplot/blob/main/DESIGN.md" target="_blank">Architecture</a> &middot;
+      <a href="https://github.com/devyaoyh/anyplot/blob/main/LICENSE" target="_blank">License</a>
     </p>
   </footer>
 
@@ -1275,9 +1305,9 @@
     window.addEventListener('scroll', () => {
       const nav = document.getElementById('nav');
       if (window.scrollY > 50) {
-        nav.style.borderBottomColor = 'rgba(255,255,255,0.08)';
+        nav.style.borderBottomColor = '#ddd6ca';
       } else {
-        nav.style.borderBottomColor = 'rgba(255,255,255,0.06)';
+        nav.style.borderBottomColor = '#e8e2d9';
       }
     });
   </script>
