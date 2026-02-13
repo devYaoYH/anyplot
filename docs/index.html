@@ -84,6 +84,13 @@
       background: none;
       -webkit-background-clip: unset;
       background-clip: unset;
+      text-decoration: none;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .nav-logo:hover {
+      opacity: 0.8;
     }
 
     .nav-links {
@@ -852,16 +859,27 @@
     }
 
     @media (max-width: 900px) {
-      .bg-circles {
-        transform: scale(0.65);
-        transform-origin: top center;
+      .bg-circle {
+        transform: scale(0.7);
+      }
+      /* Hide some circles on tablets to reduce clutter */
+      .bg-circle:nth-child(5),
+      .bg-circle:nth-child(7) {
+        opacity: 0.25;
       }
     }
 
     @media (max-width: 640px) {
-      .bg-circles {
-        transform: scale(0.4);
-        transform-origin: top center;
+      .bg-circle {
+        transform: scale(0.5);
+        opacity: 0.35 !important;
+      }
+      /* Hide more circles on mobile */
+      .bg-circle:nth-child(3),
+      .bg-circle:nth-child(5),
+      .bg-circle:nth-child(7),
+      .bg-circle:nth-child(9) {
+        display: none;
       }
     }
 
@@ -911,7 +929,7 @@
 
   <!-- Nav -->
   <nav id="nav">
-    <span class="nav-logo">AnyPlot</span>
+    <a href="#" class="nav-logo">AnyPlot</a>
     <ul class="nav-links">
       <li><a href="#features">Features</a></li>
       <li><a href="#showcase">See It In Action</a></li>
