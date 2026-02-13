@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 import pandas as pd
@@ -55,6 +58,27 @@ def get_server_api_key() -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY")
 
 
+def check_claude_code_available() -> bool:
+    """Check if Claude Code CLI is installed and authenticated.
+
+    This detects users on a Claude Code subscription plan who don't need
+    a separate API key — the Anthropic SDK can use their CLI authentication.
+    """
+    # Check if claude CLI is in PATH
+    if shutil.which("claude") is None:
+        return False
+
+    # Check if ~/.claude directory exists (indicates CLI has been set up)
+    claude_dir = Path.home() / ".claude"
+    if not claude_dir.is_dir():
+        return False
+
+    # Verify the CLI is actually authenticated by checking for session artifacts
+    has_settings = (claude_dir / "settings.json").exists()
+    has_history = (claude_dir / "history.jsonl").exists()
+    return has_settings and has_history
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -88,9 +112,12 @@ async def health_check():
 
 @app.get("/config/status", response_model=ConfigStatusResponse)
 async def config_status():
-    """Check if the server has an API key configured."""
+    """Check if the server has an API key configured and if Claude Code is available."""
     api_key = get_server_api_key()
-    return ConfigStatusResponse(api_key_configured=api_key is not None and len(api_key) > 0)
+    return ConfigStatusResponse(
+        api_key_configured=api_key is not None and len(api_key) > 0,
+        claude_code_available=check_claude_code_available(),
+    )
 
 
 @app.post(
@@ -110,7 +137,7 @@ async def visualize(request: VisualizeRequest):
     # Determine which API key to use
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         raise HTTPException(
             status_code=400,
             detail="No API key provided. Please configure an API key in settings or set ANTHROPIC_API_KEY on the server.",
@@ -368,7 +395,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -572,7 +599,7 @@ async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str,
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -862,7 +889,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -1031,7 +1058,7 @@ async def convert_stream_generator(request: ConvertRequest) -> AsyncGenerator[st
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
