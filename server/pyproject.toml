@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib>=3.8.0",
     "altair>=5.0.0",
     "sanctum-mcp",
+    "claude-agent-sdk>=0.0.20",
 ]
 
 [tool.uv.sources]

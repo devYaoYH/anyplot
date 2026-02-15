@@ -1225,7 +1225,7 @@
       <div class="section-header reveal">
         <div class="section-label">Get Started</div>
         <h2>Up and running in 60 seconds</h2>
-        <p>Just Python 3.12+, Node.js 20+, and your Anthropic API key.</p>
+        <p>Just Python 3.12+, Node.js 20+, and a Claude Code subscription or Anthropic API key.</p>
       </div>
 
       <div class="code-block reveal">
@@ -1251,6 +1251,35 @@
           <span class="code-line blank"></span>
           <span class="code-line"><span class="comment"># Start everything</span></span>
           <span class="code-line"><span class="cmd">./start.sh</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Authentication -->
+  <section class="features" style="padding: 60px 0 80px;">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-label">Authentication</div>
+        <h2>Two ways to connect</h2>
+        <p>Use your existing Claude Code subscription or bring your own API key.</p>
+      </div>
+
+      <div class="features-grid" style="grid-template-columns: repeat(2, 1fr); max-width: 800px; margin: 0 auto;">
+        <div class="feature-card reveal">
+          <div class="feature-icon green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6a9e78" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          </div>
+          <h3>Claude Code Subscription</h3>
+          <p>If you have <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" style="color: var(--accent);">Claude Code</a> installed and signed in (Pro or Max plan), AnyPlot detects it automatically &mdash; no API key needed.</p>
+        </div>
+
+        <div class="feature-card reveal">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7c6faa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h3>Anthropic API Key</h3>
+          <p>Set <code style="font-size: 0.85em; background: var(--accent-bg); padding: 2px 6px; border-radius: 4px;">ANTHROPIC_API_KEY</code> as an environment variable, or enter it in the Settings panel. Calls go directly to the Anthropic API.</p>
         </div>
       </div>
     </div>
