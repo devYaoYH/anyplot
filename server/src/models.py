@@ -113,6 +113,10 @@ class ConfigStatusResponse(BaseModel):
     api_key_configured: bool = Field(
         ..., description="Whether an API key is configured on the server"
     )
+    claude_code_available: bool = Field(
+        default=False,
+        description="Whether Claude Code CLI is installed and authenticated (subscription plan)",
+    )
 
 
 class ErrorResponse(BaseModel):

@@ -14,13 +14,17 @@ export function Settings({ onApiKeyChange }: SettingsProps) {
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [hasServerKey, setHasServerKey] = useState<boolean | null>(null);
   const [hasLocalKey, setHasLocalKey] = useState(false);
+  const [claudeCodeAvailable, setClaudeCodeAvailable] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Check server config status on mount
   useEffect(() => {
     checkConfigStatus()
-      .then((status) => setHasServerKey(status.api_key_configured))
+      .then((status) => {
+        setHasServerKey(status.api_key_configured);
+        setClaudeCodeAvailable(status.claude_code_available);
+      })
       .catch(() => setHasServerKey(false));
 
     const localKey = getApiKey();
@@ -56,7 +60,7 @@ export function Settings({ onApiKeyChange }: SettingsProps) {
     setTimeout(() => setMessage(null), 2000);
   }, [onApiKeyChange]);
 
-  const needsApiKey = hasServerKey === false && !hasLocalKey;
+  const needsApiKey = hasServerKey === false && !hasLocalKey && !claudeCodeAvailable;
 
   return (
     <div className="relative">
@@ -112,6 +116,19 @@ export function Settings({ onApiKeyChange }: SettingsProps) {
 
               {/* Status indicator */}
               <div className="mb-4 p-3 bg-gray-50 rounded-md text-sm">
+                {claudeCodeAvailable && (
+                  <div className="flex items-center gap-2 mb-2 p-2 bg-green-50 rounded border border-green-200">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="text-green-700 font-medium">
+                      Claude Code subscription detected
+                    </span>
+                  </div>
+                )}
+                {claudeCodeAvailable && !hasServerKey && !hasLocalKey && (
+                  <p className="text-xs text-green-600 mb-2">
+                    Using Claude Code authentication — no API key required.
+                  </p>
+                )}
                 <div className="flex items-center gap-2 mb-1">
                   <span
                     className={`w-2 h-2 rounded-full ${

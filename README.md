@@ -44,6 +44,15 @@ uv run uvicorn server.src.main:app --reload --port 8000
 cd app && npm run dev
 ```
 
+### Authentication
+
+AnyPlot supports two ways to authenticate with Claude:
+
+- **API Key**: Set `ANTHROPIC_API_KEY` as an environment variable or enter it in the Settings panel in the UI. Calls go directly to the Anthropic API.
+- **Claude Code subscription**: If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and signed in (e.g., with a Pro or Max plan), AnyPlot detects it automatically — no API key needed. The app uses the Claude Agent SDK to authenticate through your existing Claude Code session.
+
+The Settings panel shows which authentication method is active.
+
 **Note on packages**: Generated visualization code runs in the same Python environment as the backend server. Install additional packages (e.g., `seaborn`, `plotly`, `scipy`) via `uv pip install` to make them available to generated code. The sandbox blocks only dangerous imports (`os`, `subprocess`, `socket`, etc.).
 
 ## Testing

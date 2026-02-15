@@ -24,7 +24,7 @@ const mockCheckConfigStatus = vi.mocked(checkConfigStatus);
 describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCheckConfigStatus.mockResolvedValue({ api_key_configured: false });
+    mockCheckConfigStatus.mockResolvedValue({ api_key_configured: false, claude_code_available: false });
     mockGetApiKey.mockReturnValue(null);
   });
 
@@ -45,7 +45,7 @@ describe('Settings', () => {
   });
 
   it('shows server key status as not configured', async () => {
-    mockCheckConfigStatus.mockResolvedValue({ api_key_configured: false });
+    mockCheckConfigStatus.mockResolvedValue({ api_key_configured: false, claude_code_available: false });
     render(<Settings />);
 
     fireEvent.click(screen.getByRole('button'));
@@ -57,7 +57,7 @@ describe('Settings', () => {
   });
 
   it('shows server key status as configured', async () => {
-    mockCheckConfigStatus.mockResolvedValue({ api_key_configured: true });
+    mockCheckConfigStatus.mockResolvedValue({ api_key_configured: true, claude_code_available: false });
     render(<Settings />);
 
     fireEvent.click(screen.getByRole('button'));

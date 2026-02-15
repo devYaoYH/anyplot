@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 import pandas as pd
@@ -28,6 +30,7 @@ from .agent import (
     CONVERT_TO_ALTAIR_PROMPT,
     CONVERT_TO_MATPLOTLIB_PROMPT,
 )
+from .claude_code_agent import ClaudeCodeAgent
 from .models import (
     ConfigStatusResponse,
     ContinueRequest,
@@ -53,6 +56,73 @@ from .session_store import (
 def get_server_api_key() -> str | None:
     """Get the API key from server environment."""
     return os.environ.get("ANTHROPIC_API_KEY")
+
+
+def check_claude_code_available() -> bool:
+    """Check if Claude Code CLI is installed and authenticated.
+
+    This detects users on a Claude Code subscription plan who don't need
+    a separate API key — the Anthropic SDK can use their CLI authentication.
+    """
+    # Check if claude CLI is in PATH
+    if shutil.which("claude") is None:
+        return False
+
+    # Check if ~/.claude directory exists (indicates CLI has been set up)
+    claude_dir = Path.home() / ".claude"
+    if not claude_dir.is_dir():
+        return False
+
+    # Verify the CLI is actually authenticated by checking for session artifacts
+    has_settings = (claude_dir / "settings.json").exists()
+    has_history = (claude_dir / "history.jsonl").exists()
+    return has_settings and has_history
+
+
+def create_agent(
+    mcp_server: MCPServer,
+    config: AgentConfig,
+    api_key: str | None,
+) -> Agent | ClaudeCodeAgent:
+    """Create the appropriate agent based on available authentication.
+
+    Uses the standard Anthropic API agent when an API key is available,
+    or the Claude Code Agent SDK when the user has a Claude Code subscription.
+
+    Args:
+        mcp_server: The MCP server instance for tool calls.
+        config: Agent configuration.
+        api_key: Optional API key from request or server env.
+
+    Returns:
+        Agent or ClaudeCodeAgent instance.
+    """
+    if api_key:
+        return Agent(mcp_server=mcp_server, config=config, api_key=api_key)
+    return ClaudeCodeAgent(mcp_server=mcp_server, config=config)
+
+
+async def agent_generate(agent: Agent | ClaudeCodeAgent, prompt: str, schema_context, system_prompt: str | None = None) -> AgentResult:
+    """Generate code, dispatching to sync Agent or async ClaudeCodeAgent."""
+    if isinstance(agent, ClaudeCodeAgent):
+        return await agent.generate_visualization_code(prompt, schema_context, system_prompt=system_prompt)
+    if system_prompt:
+        return _generate_with_system_prompt(agent, prompt, schema_context, system_prompt)
+    return agent.generate_visualization_code(prompt, schema_context)
+
+
+async def agent_refine(agent: Agent | ClaudeCodeAgent, result: AgentResult, error: str, stderr: str | None = None) -> AgentResult:
+    """Refine code, dispatching to sync Agent or async ClaudeCodeAgent."""
+    if isinstance(agent, ClaudeCodeAgent):
+        return await agent.refine_code(result, error, stderr)
+    return agent.refine_code(result, error, stderr)
+
+
+async def agent_continue(agent: Agent | ClaudeCodeAgent, result: AgentResult, prompt: str, schema_context) -> AgentResult:
+    """Continue conversation, dispatching to sync Agent or async ClaudeCodeAgent."""
+    if isinstance(agent, ClaudeCodeAgent):
+        return await agent.continue_conversation(result, prompt, schema_context)
+    return agent.continue_conversation(result, prompt, schema_context)
 
 
 @asynccontextmanager
@@ -88,9 +158,12 @@ async def health_check():
 
 @app.get("/config/status", response_model=ConfigStatusResponse)
 async def config_status():
-    """Check if the server has an API key configured."""
+    """Check if the server has an API key configured and if Claude Code is available."""
     api_key = get_server_api_key()
-    return ConfigStatusResponse(api_key_configured=api_key is not None and len(api_key) > 0)
+    return ConfigStatusResponse(
+        api_key_configured=api_key is not None and len(api_key) > 0,
+        claude_code_available=check_claude_code_available(),
+    )
 
 
 @app.post(
@@ -110,7 +183,7 @@ async def visualize(request: VisualizeRequest):
     # Determine which API key to use
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         raise HTTPException(
             status_code=400,
             detail="No API key provided. Please configure an API key in settings or set ANTHROPIC_API_KEY on the server.",
@@ -134,17 +207,13 @@ async def visualize(request: VisualizeRequest):
 
         # Create agent with the determined API key
         config = AgentConfig()
-        agent = Agent(
-            mcp_server=mcp_server,
-            config=config,
-            api_key=api_key,
-        )
+        agent = create_agent(mcp_server=mcp_server, config=config, api_key=api_key)
 
         # Get schema context for prompt augmentation
         schema_context = mcp_server.get_schema_with_original_names()
 
         # Generate visualization code with schema context
-        result = agent.generate_visualization_code(request.prompt, schema_context)
+        result = await agent_generate(agent, request.prompt, schema_context)
 
         if not result.success:
             raise HTTPException(
@@ -166,8 +235,8 @@ async def visualize(request: VisualizeRequest):
             if not is_valid:
                 if attempt < config.max_execution_retries:
                     # Treat validation failure as an execution error for refinement
-                    current_result = agent.refine_code(
-                        current_result,
+                    current_result = await agent_refine(
+                        agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
                     if not current_result.success:
@@ -203,8 +272,8 @@ async def visualize(request: VisualizeRequest):
                 last_error += f" | Stderr: {sandbox_result.stderr}"
 
             if attempt < config.max_execution_retries:
-                current_result = agent.refine_code(
-                    current_result,
+                current_result = await agent_refine(
+                    agent, current_result,
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
@@ -279,6 +348,9 @@ def _serialize_agent_log(result) -> dict:
 def _generate_with_system_prompt(agent: Agent, prompt: str, schema_context, system_prompt: str):
     """Generate visualization code with a custom system prompt.
 
+    Only used for the standard Agent path. ClaudeCodeAgent handles custom
+    system prompts via agent_generate() dispatch.
+
     Args:
         agent: The Agent instance
         prompt: User's visualization prompt
@@ -288,7 +360,6 @@ def _generate_with_system_prompt(agent: Agent, prompt: str, schema_context, syst
     Returns:
         AgentResult with generated code
     """
-
     tools = agent._build_anthropic_tools()
     augmented_prompt = agent._augment_prompt_with_schema(prompt, schema_context)
     messages = [{"role": "user", "content": augmented_prompt}]
@@ -368,7 +439,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -390,11 +461,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
         )
 
         config = AgentConfig()
-        agent = Agent(
-            mcp_server=mcp_server,
-            config=config,
-            api_key=api_key,
-        )
+        agent = create_agent(mcp_server=mcp_server, config=config, api_key=api_key)
 
         # Get schema context for prompt augmentation
         schema_context = mcp_server.get_schema_with_original_names()
@@ -404,7 +471,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
 
         yield format_sse_event("status", {"stage": "generating", "message": f"Generating {'interactive' if viz_mode == 'altair' else 'static'} visualization code"})
 
-        result = _generate_with_system_prompt(agent, request.prompt, schema_context, system_prompt)
+        result = await agent_generate(agent, request.prompt, schema_context, system_prompt=system_prompt)
 
         if not result.success:
             yield format_sse_event("error", {"message": f"Failed to generate code: {result.error}"})
@@ -432,8 +499,8 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
                         "message": f"Code validation failed, refining: {validation_error}",
                         "attempt": attempt + 1,
                     })
-                    current_result = agent.refine_code(
-                        current_result,
+                    current_result = await agent_refine(
+                        agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
                     if not current_result.success:
@@ -485,8 +552,8 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
                     "message": f"Execution failed, refining code: {sandbox_result.error}",
                     "attempt": attempt + 1,
                 })
-                current_result = agent.refine_code(
-                    current_result,
+                current_result = await agent_refine(
+                    agent, current_result,
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
@@ -572,7 +639,7 @@ async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str,
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -637,11 +704,7 @@ async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str,
         yield format_sse_event("status", {"stage": "generating", "message": "Agent analyzing new data structure"})
 
         config = AgentConfig()
-        agent = Agent(
-            mcp_server=mcp_server,
-            config=config,
-            api_key=api_key,
-        )
+        agent = create_agent(mcp_server=mcp_server, config=config, api_key=api_key)
 
         # Get schema context for prompt augmentation
         schema_context = mcp_server.get_schema_with_original_names()
@@ -662,80 +725,7 @@ Please analyze the new data structure using the available tools and fix the code
 The visualization should still accomplish the original goal: {request.original_prompt}"""
 
         # Use the replay fix system prompt
-        agent._client = agent._client  # Keep client
-        original_generate = agent.generate_visualization_code
-
-        def generate_with_fix_prompt(prompt: str, schema_ctx=None):
-            """Generate with the fix system prompt."""
-            tools = agent._build_anthropic_tools()
-            augmented_prompt = agent._augment_prompt_with_schema(prompt, schema_ctx)
-            messages = [{"role": "user", "content": augmented_prompt}]
-            tool_calls_made = []
-            num_iterations = 0
-
-            while num_iterations < agent.config.max_tool_calls:
-                num_iterations += 1
-                try:
-                    response = agent._client.messages.create(
-                        model=agent.config.model,
-                        max_tokens=agent.config.max_tokens,
-                        temperature=agent.config.temperature,
-                        system=REPLAY_FIX_SYSTEM_PROMPT,
-                        tools=tools,
-                        messages=messages,
-                    )
-                except Exception as e:
-                    return AgentResult(
-                        success=False,
-                        error=f"API error: {str(e)}",
-                        tool_calls=tool_calls_made,
-                        messages=messages,
-                    )
-
-                if response.stop_reason == "tool_use":
-                    tool_results = []
-                    for block in response.content:
-                        if block.type == "tool_use":
-                            result = agent.mcp_server.call_tool(block.name, block.input)
-                            tool_calls_made.append({
-                                "tool": block.name,
-                                "input": block.input,
-                                "result": result.data if result.success else result.error,
-                            })
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": str(result.data) if result.success else f"Error: {result.error}",
-                            })
-                    messages.append({"role": "assistant", "content": response.content})
-                    messages.append({"role": "user", "content": tool_results})
-                else:
-                    messages.append({"role": "assistant", "content": response.content})
-                    code = agent._extract_code(response)
-                    if code:
-                        return AgentResult(
-                            success=True,
-                            code=code,
-                            tool_calls=tool_calls_made,
-                            messages=messages,
-                        )
-                    else:
-                        text_response = agent._extract_text(response)
-                        return AgentResult(
-                            success=False,
-                            error=f"No code block found. Response: {text_response[:500] if text_response else 'Empty'}",
-                            tool_calls=tool_calls_made,
-                            messages=messages,
-                        )
-
-            return AgentResult(
-                success=False,
-                error=f"Max tool calls ({agent.config.max_tool_calls}) exceeded",
-                tool_calls=tool_calls_made,
-                messages=messages,
-            )
-
-        result = generate_with_fix_prompt(fix_prompt, schema_context)
+        result = await agent_generate(agent, fix_prompt, schema_context, system_prompt=REPLAY_FIX_SYSTEM_PROMPT)
 
         if not result.success:
             yield format_sse_event("error", {"message": f"Failed to fix code: {result.error}"})
@@ -761,8 +751,8 @@ The visualization should still accomplish the original goal: {request.original_p
                         "message": f"Validation failed, refining: {validation_error}",
                         "attempt": attempt + 1,
                     })
-                    current_result = agent.refine_code(
-                        current_result,
+                    current_result = await agent_refine(
+                        agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
                     if not current_result.success:
@@ -808,8 +798,8 @@ The visualization should still accomplish the original goal: {request.original_p
                     "message": f"Execution failed, refining: {sandbox_result.error}",
                     "attempt": attempt + 1,
                 })
-                current_result = agent.refine_code(
-                    current_result,
+                current_result = await agent_refine(
+                    agent, current_result,
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
@@ -862,7 +852,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -884,11 +874,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
         )
 
         config = AgentConfig()
-        agent = Agent(
-            mcp_server=mcp_server,
-            config=config,
-            api_key=api_key,
-        )
+        agent = create_agent(mcp_server=mcp_server, config=config, api_key=api_key)
 
         # Get schema context for prompt augmentation
         schema_context = mcp_server.get_schema_with_original_names()
@@ -904,7 +890,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
         )
 
         # Continue the conversation
-        result = agent.continue_conversation(previous_result, request.prompt, schema_context)
+        result = await agent_continue(agent, previous_result, request.prompt, schema_context)
 
         if not result.success:
             yield format_sse_event("error", {"message": f"Failed to generate adjusted code: {result.error}"})
@@ -933,8 +919,8 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
                         "message": f"Validation failed, refining: {validation_error}",
                         "attempt": attempt + 1,
                     })
-                    current_result = agent.refine_code(
-                        current_result,
+                    current_result = await agent_refine(
+                        agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
                     if not current_result.success:
@@ -979,8 +965,8 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
                     "message": f"Execution failed, refining: {sandbox_result.error}",
                     "attempt": attempt + 1,
                 })
-                current_result = agent.refine_code(
-                    current_result,
+                current_result = await agent_refine(
+                    agent, current_result,
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
@@ -1031,7 +1017,7 @@ async def convert_stream_generator(request: ConvertRequest) -> AsyncGenerator[st
     """
     api_key = request.api_key or get_server_api_key()
 
-    if not api_key:
+    if not api_key and not check_claude_code_available():
         yield format_sse_event("error", {"message": "No API key provided"})
         return
 
@@ -1053,11 +1039,7 @@ async def convert_stream_generator(request: ConvertRequest) -> AsyncGenerator[st
         )
 
         config = AgentConfig()
-        agent = Agent(
-            mcp_server=mcp_server,
-            config=config,
-            api_key=api_key,
-        )
+        agent = create_agent(mcp_server=mcp_server, config=config, api_key=api_key)
 
         # Get schema context for prompt augmentation
         schema_context = mcp_server.get_schema_with_original_names()
@@ -1084,7 +1066,7 @@ Current code:
 
 Please create an equivalent visualization using {'Altair' if target_mode == 'altair' else 'matplotlib'}."""
 
-        result = _generate_with_system_prompt(agent, conversion_prompt, schema_context, system_prompt)
+        result = await agent_generate(agent, conversion_prompt, schema_context, system_prompt=system_prompt)
 
         if not result.success:
             yield format_sse_event("error", {"message": f"Failed to convert code: {result.error}"})
@@ -1112,8 +1094,8 @@ Please create an equivalent visualization using {'Altair' if target_mode == 'alt
                         "message": f"Validation failed, refining: {validation_error}",
                         "attempt": attempt + 1,
                     })
-                    current_result = agent.refine_code(
-                        current_result,
+                    current_result = await agent_refine(
+                        agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
                     if not current_result.success:
@@ -1164,8 +1146,8 @@ Please create an equivalent visualization using {'Altair' if target_mode == 'alt
                     "message": f"Execution failed, refining: {sandbox_result.error}",
                     "attempt": attempt + 1,
                 })
-                current_result = agent.refine_code(
-                    current_result,
+                current_result = await agent_refine(
+                    agent, current_result,
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )

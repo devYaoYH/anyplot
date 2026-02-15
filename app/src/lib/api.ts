@@ -19,6 +19,7 @@ export interface VisualizeRequest {
 
 export interface ConfigStatusResponse {
   api_key_configured: boolean;
+  claude_code_available: boolean;
 }
 
 // API key management
