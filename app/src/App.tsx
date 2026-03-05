@@ -371,11 +371,12 @@ function App() {
     setQueryResult(null);
     clearDatabase();
     clearResult();
+    clearSession();
     setLogSnapshots([]);
     setSqlQuery('SELECT * FROM data LIMIT 100');
 
     await loadSession(sessionId);
-  }, [loadSession, clearDatabase, clearResult]);
+  }, [loadSession, clearDatabase, clearResult, clearSession]);
 
   const handleDeleteSession = useCallback(async () => {
     await deleteCurrentSession();

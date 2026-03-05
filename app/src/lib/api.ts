@@ -96,8 +96,8 @@ export async function visualize(request: VisualizeRequest): Promise<VisualizeRes
 }
 
 export interface StreamEvent {
-  event: 'status' | 'result' | 'error';
-  data: StatusEventData | ResultEventData | ErrorEventData;
+  event: 'status' | 'result' | 'error' | 'debug_log';
+  data: StatusEventData | ResultEventData | ErrorEventData | DebugLogEventData;
 }
 
 export interface StatusEventData {
@@ -143,6 +143,12 @@ export interface ErrorEventData {
   message: string;
 }
 
+export interface DebugLogEventData {
+  tool_calls: ToolCallLog[];
+  messages: MessageLog[];
+  raw_error?: string;
+}
+
 export interface ReplayRequest {
   data: Record<string, unknown>[];
   code: string;
@@ -161,6 +167,60 @@ export interface ContinueRequest {
 }
 
 export type StreamCallback = (event: StreamEvent) => void;
+
+async function consumeSSEStream<E extends { event: string }>(
+  response: Response,
+  onEvent: (event: E) => void,
+): Promise<void> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ApiError('No response body', 500);
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let receivedTerminal = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    let currentEvent: string | null = null;
+    let currentData: string | null = null;
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        currentData = line.slice(6).trim();
+      } else if (line === '' && currentEvent && currentData) {
+        try {
+          const data = JSON.parse(currentData);
+          if (currentEvent === 'result' || currentEvent === 'error') {
+            receivedTerminal = true;
+          }
+          onEvent({ event: currentEvent, data } as E);
+        } catch {
+          console.error('Failed to parse SSE data:', currentData);
+        }
+        currentEvent = null;
+        currentData = null;
+      }
+    }
+  }
+
+  if (!receivedTerminal) {
+    onEvent({
+      event: 'error',
+      data: { message: 'Stream ended unexpectedly without a result. Check server logs for details.' },
+    } as E);
+  }
+}
 
 export async function visualizeStream(
   request: VisualizeRequest,
@@ -185,50 +245,12 @@ export async function visualizeStream(
     );
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new ApiError('No response body', 500);
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    // Parse SSE events from buffer
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-    let currentEvent: string | null = null;
-    let currentData: string | null = null;
-
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        currentData = line.slice(6).trim();
-      } else if (line === '' && currentEvent && currentData) {
-        // End of event, emit it
-        try {
-          const data = JSON.parse(currentData);
-          onEvent({ event: currentEvent as StreamEvent['event'], data });
-        } catch {
-          console.error('Failed to parse SSE data:', currentData);
-        }
-        currentEvent = null;
-        currentData = null;
-      }
-    }
-  }
+  await consumeSSEStream<StreamEvent>(response, onEvent);
 }
 
 export interface ReplayStreamEvent {
-  event: 'status' | 'result' | 'error';
-  data: StatusEventData | ReplayResultEventData | ErrorEventData;
+  event: 'status' | 'result' | 'error' | 'debug_log';
+  data: StatusEventData | ReplayResultEventData | ErrorEventData | DebugLogEventData;
 }
 
 export type ReplayStreamCallback = (event: ReplayStreamEvent) => void;
@@ -256,43 +278,7 @@ export async function replayStream(
     );
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new ApiError('No response body', 500);
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    let currentEvent: string | null = null;
-    let currentData: string | null = null;
-
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        currentData = line.slice(6).trim();
-      } else if (line === '' && currentEvent && currentData) {
-        try {
-          const data = JSON.parse(currentData);
-          onEvent({ event: currentEvent as ReplayStreamEvent['event'], data });
-        } catch {
-          console.error('Failed to parse SSE data:', currentData);
-        }
-        currentEvent = null;
-        currentData = null;
-      }
-    }
-  }
+  await consumeSSEStream<ReplayStreamEvent>(response, onEvent);
 }
 
 export async function continueStream(
@@ -318,43 +304,7 @@ export async function continueStream(
     );
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new ApiError('No response body', 500);
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    let currentEvent: string | null = null;
-    let currentData: string | null = null;
-
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        currentData = line.slice(6).trim();
-      } else if (line === '' && currentEvent && currentData) {
-        try {
-          const data = JSON.parse(currentData);
-          onEvent({ event: currentEvent as StreamEvent['event'], data });
-        } catch {
-          console.error('Failed to parse SSE data:', currentData);
-        }
-        currentEvent = null;
-        currentData = null;
-      }
-    }
-  }
+  await consumeSSEStream<StreamEvent>(response, onEvent);
 }
 
 export interface ConvertRequest {
@@ -438,43 +388,7 @@ export async function convertStream(
     );
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new ApiError('No response body', 500);
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    let currentEvent: string | null = null;
-    let currentData: string | null = null;
-
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        currentData = line.slice(6).trim();
-      } else if (line === '' && currentEvent && currentData) {
-        try {
-          const data = JSON.parse(currentData);
-          onEvent({ event: currentEvent as StreamEvent['event'], data });
-        } catch {
-          console.error('Failed to parse SSE data:', currentData);
-        }
-        currentEvent = null;
-        currentData = null;
-      }
-    }
-  }
+  await consumeSSEStream<StreamEvent>(response, onEvent);
 }
 
 // ============================================================================

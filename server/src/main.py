@@ -6,12 +6,15 @@ This module provides the HTTP API for the visualization service.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import uvicorn
 import pandas as pd
@@ -345,6 +348,22 @@ def _serialize_agent_log(result) -> dict:
     }
 
 
+def _format_debug_log_event(result: AgentResult) -> str:
+    """Format an agent result as a debug_log SSE event for the frontend."""
+    try:
+        log = _serialize_agent_log(result)
+        if not result.success:
+            log["raw_error"] = result.error
+        return format_sse_event("debug_log", log)
+    except Exception as e:
+        logger.exception("Failed to serialize debug log")
+        return format_sse_event("debug_log", {
+            "tool_calls": [],
+            "messages": [],
+            "raw_error": f"Failed to serialize agent log: {e}",
+        })
+
+
 def _generate_with_system_prompt(agent: Agent, prompt: str, schema_context, system_prompt: str):
     """Generate visualization code with a custom system prompt.
 
@@ -447,6 +466,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
     viz_mode = request.viz_mode
 
     try:
+        logger.info("[visualize:%s] Starting visualization (mode=%s)", session_id, viz_mode)
         yield format_sse_event("status", {"stage": "initializing", "message": "Setting up visualization session"})
 
         df = pd.DataFrame(request.data)
@@ -472,10 +492,14 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
         yield format_sse_event("status", {"stage": "generating", "message": f"Generating {'interactive' if viz_mode == 'altair' else 'static'} visualization code"})
 
         result = await agent_generate(agent, request.prompt, schema_context, system_prompt=system_prompt)
+        yield _format_debug_log_event(result)
 
         if not result.success:
+            logger.error("[visualize:%s] Agent generation failed: %s", session_id, result.error)
             yield format_sse_event("error", {"message": f"Failed to generate code: {result.error}"})
             return
+
+        logger.info("[visualize:%s] Agent generated code (%d chars), executing", session_id, len(result.code or ""))
 
         sandbox = Sandbox(SandboxConfig(timeout_seconds=30))
         column_mapping = mcp_server.get_column_mapping()
@@ -503,6 +527,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
                         agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
+                    yield _format_debug_log_event(current_result)
                     if not current_result.success:
                         yield format_sse_event("error", {"message": f"Failed to refine code: {current_result.error}"})
                         return
@@ -528,6 +553,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
             )
 
             if sandbox_result.success:
+                logger.info("[visualize:%s] Visualization succeeded", session_id)
                 # Serialize agent logs for the frontend
                 agent_log = _serialize_agent_log(current_result)
                 result_data = {
@@ -545,6 +571,7 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
             last_error = f"{sandbox_result.error}"
             if sandbox_result.stderr:
                 last_error += f" | Stderr: {sandbox_result.stderr}"
+            logger.warning("[visualize:%s] Execution failed (attempt %d): %s", session_id, attempt + 1, last_error)
 
             if attempt < config.max_execution_retries:
                 yield format_sse_event("status", {
@@ -552,11 +579,14 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
                     "message": f"Execution failed, refining code: {sandbox_result.error}",
                     "attempt": attempt + 1,
                 })
+                logger.info("[visualize:%s] Refining code after execution failure", session_id)
                 current_result = await agent_refine(
                     agent, current_result,
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
+                logger.info("[visualize:%s] Refinement complete (success=%s)", session_id, current_result.success)
+                yield _format_debug_log_event(current_result)
                 if not current_result.success:
                     yield format_sse_event("error", {"message": f"Failed to refine code: {current_result.error}"})
                     return
@@ -567,8 +597,10 @@ async def visualize_stream_generator(request: VisualizeRequest) -> AsyncGenerato
         })
 
     except AgentError as e:
+        logger.error("[visualize:%s] AgentError: %s", session_id, e)
         yield format_sse_event("error", {"message": str(e)})
-    except Exception as e:
+    except BaseException as e:
+        logger.exception("[visualize:%s] Unexpected error", session_id)
         yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
 
 
@@ -646,6 +678,7 @@ async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str,
     session_id = str(uuid.uuid4())[:8]
 
     try:
+        logger.info("[replay:%s] Starting replay", session_id)
         yield format_sse_event("status", {"stage": "initializing", "message": "Setting up replay session"})
 
         df = pd.DataFrame(request.data)
@@ -682,6 +715,7 @@ async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str,
             )
 
             if sandbox_result.success:
+                logger.info("[replay:%s] Direct execution succeeded", session_id)
                 # Direct execution succeeded - no agent needed
                 yield format_sse_event("result", {
                     "image": sandbox_result.image_base64,
@@ -692,6 +726,7 @@ async def replay_stream_generator(request: ReplayRequest) -> AsyncGenerator[str,
                 return
 
             # Execution failed - need to fix with agent
+            logger.info("[replay:%s] Direct execution failed, launching agent: %s", session_id, sandbox_result.error)
             yield format_sse_event("status", {
                 "stage": "retrying",
                 "message": f"Execution failed: {sandbox_result.error}. Launching agent to fix...",
@@ -726,8 +761,10 @@ The visualization should still accomplish the original goal: {request.original_p
 
         # Use the replay fix system prompt
         result = await agent_generate(agent, fix_prompt, schema_context, system_prompt=REPLAY_FIX_SYSTEM_PROMPT)
+        yield _format_debug_log_event(result)
 
         if not result.success:
+            logger.error("[replay:%s] Agent fix failed: %s", session_id, result.error)
             yield format_sse_event("error", {"message": f"Failed to fix code: {result.error}"})
             return
 
@@ -755,6 +792,7 @@ The visualization should still accomplish the original goal: {request.original_p
                         agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
+                    yield _format_debug_log_event(current_result)
                     if not current_result.success:
                         yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
                         return
@@ -779,6 +817,7 @@ The visualization should still accomplish the original goal: {request.original_p
             )
 
             if sandbox_result.success:
+                logger.info("[replay:%s] Fixed code execution succeeded", session_id)
                 agent_log = _serialize_agent_log(current_result)
                 yield format_sse_event("result", {
                     "image": sandbox_result.image_base64,
@@ -803,6 +842,7 @@ The visualization should still accomplish the original goal: {request.original_p
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
+                yield _format_debug_log_event(current_result)
                 if not current_result.success:
                     yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
                     return
@@ -813,8 +853,10 @@ The visualization should still accomplish the original goal: {request.original_p
         })
 
     except AgentError as e:
+        logger.error("[replay:%s] AgentError: %s", session_id, e)
         yield format_sse_event("error", {"message": str(e)})
-    except Exception as e:
+    except BaseException as e:
+        logger.exception("[replay:%s] Unexpected error", session_id)
         yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
 
 
@@ -859,6 +901,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
     session_id = str(uuid.uuid4())[:8]
 
     try:
+        logger.info("[continue:%s] Starting continuation", session_id)
         yield format_sse_event("status", {"stage": "initializing", "message": "Continuing conversation"})
 
         df = pd.DataFrame(request.data)
@@ -891,10 +934,14 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
 
         # Continue the conversation
         result = await agent_continue(agent, previous_result, request.prompt, schema_context)
+        yield _format_debug_log_event(result)
 
         if not result.success:
+            logger.error("[continue:%s] Agent continuation failed: %s", session_id, result.error)
             yield format_sse_event("error", {"message": f"Failed to generate adjusted code: {result.error}"})
             return
+
+        logger.info("[continue:%s] Agent generated adjusted code (%d chars)", session_id, len(result.code or ""))
 
         # Execute the adjusted code with retry loop
         sandbox = Sandbox(SandboxConfig(timeout_seconds=30))
@@ -923,6 +970,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
                         agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
+                    yield _format_debug_log_event(current_result)
                     if not current_result.success:
                         yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
                         return
@@ -947,6 +995,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
             )
 
             if sandbox_result.success:
+                logger.info("[continue:%s] Adjusted code execution succeeded", session_id)
                 agent_log = _serialize_agent_log(current_result)
                 yield format_sse_event("result", {
                     "image": sandbox_result.image_base64,
@@ -970,6 +1019,7 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
+                yield _format_debug_log_event(current_result)
                 if not current_result.success:
                     yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
                     return
@@ -980,8 +1030,10 @@ async def continue_stream_generator(request: ContinueRequest) -> AsyncGenerator[
         })
 
     except AgentError as e:
+        logger.error("[continue:%s] AgentError: %s", session_id, e)
         yield format_sse_event("error", {"message": str(e)})
-    except Exception as e:
+    except BaseException as e:
+        logger.exception("[continue:%s] Unexpected error", session_id)
         yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
 
 
@@ -1025,6 +1077,7 @@ async def convert_stream_generator(request: ConvertRequest) -> AsyncGenerator[st
     target_mode = request.target_mode
 
     try:
+        logger.info("[convert:%s] Starting conversion (target=%s)", session_id, target_mode)
         yield format_sse_event("status", {"stage": "initializing", "message": "Setting up conversion session"})
 
         df = pd.DataFrame(request.data)
@@ -1067,10 +1120,14 @@ Current code:
 Please create an equivalent visualization using {'Altair' if target_mode == 'altair' else 'matplotlib'}."""
 
         result = await agent_generate(agent, conversion_prompt, schema_context, system_prompt=system_prompt)
+        yield _format_debug_log_event(result)
 
         if not result.success:
+            logger.error("[convert:%s] Agent conversion failed: %s", session_id, result.error)
             yield format_sse_event("error", {"message": f"Failed to convert code: {result.error}"})
             return
+
+        logger.info("[convert:%s] Agent generated converted code (%d chars)", session_id, len(result.code or ""))
 
         sandbox = Sandbox(SandboxConfig(timeout_seconds=30))
         column_mapping = mcp_server.get_column_mapping()
@@ -1098,6 +1155,7 @@ Please create an equivalent visualization using {'Altair' if target_mode == 'alt
                         agent, current_result,
                         f"Code validation failed: {validation_error}",
                     )
+                    yield _format_debug_log_event(current_result)
                     if not current_result.success:
                         yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
                         return
@@ -1123,6 +1181,7 @@ Please create an equivalent visualization using {'Altair' if target_mode == 'alt
             )
 
             if sandbox_result.success:
+                logger.info("[convert:%s] Conversion succeeded", session_id)
                 agent_log = _serialize_agent_log(current_result)
                 result_data = {
                     "code": current_code,
@@ -1151,6 +1210,7 @@ Please create an equivalent visualization using {'Altair' if target_mode == 'alt
                     sandbox_result.error,
                     sandbox_result.stderr,
                 )
+                yield _format_debug_log_event(current_result)
                 if not current_result.success:
                     yield format_sse_event("error", {"message": f"Failed to refine: {current_result.error}"})
                     return
@@ -1161,8 +1221,10 @@ Please create an equivalent visualization using {'Altair' if target_mode == 'alt
         })
 
     except AgentError as e:
+        logger.error("[convert:%s] AgentError: %s", session_id, e)
         yield format_sse_event("error", {"message": str(e)})
-    except Exception as e:
+    except BaseException as e:
+        logger.exception("[convert:%s] Unexpected error", session_id)
         yield format_sse_event("error", {"message": f"Internal error: {str(e)}"})
 
 
