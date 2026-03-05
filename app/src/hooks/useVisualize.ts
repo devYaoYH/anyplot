@@ -19,6 +19,7 @@ import type {
   ResultEventData,
   ReplayResultEventData,
   ErrorEventData,
+  DebugLogEventData,
   AgentLog,
   ToolCallLog,
   VizMode,
@@ -56,6 +57,7 @@ export interface UseVisualizeReturn {
   progress: ProgressStatus | null;
   session: SessionState | null;
   hasActiveSession: boolean;
+  debugLog: DebugLogEventData | null;
   generateVisualization: (data: Record<string, unknown>[], prompt: string, vizMode?: VizMode) => Promise<void>;
   continueVisualization: (data: Record<string, unknown>[], prompt: string) => Promise<void>;
   replayVisualization: (data: Record<string, unknown>[], code: string, originalPrompt: string) => Promise<void>;
@@ -74,6 +76,7 @@ export function useVisualize(): UseVisualizeReturn {
   const [altairResult, setAltairResult] = useState<VisualizeResult | null>(null);
   const [progress, setProgress] = useState<ProgressStatus | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [debugLog, setDebugLog] = useState<DebugLogEventData | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const generateVisualization = useCallback(
@@ -99,6 +102,7 @@ export function useVisualize(): UseVisualizeReturn {
       setError(null);
       setResult(null);
       setProgress(null);
+      setDebugLog(null);
       // Clear session when starting a new visualization
       setSession(null);
 
@@ -124,6 +128,10 @@ export function useVisualize(): UseVisualizeReturn {
                   message: statusData.message,
                   attempt: statusData.attempt,
                 });
+                break;
+              }
+              case 'debug_log': {
+                setDebugLog(event.data as DebugLogEventData);
                 break;
               }
               case 'result': {
@@ -205,6 +213,7 @@ export function useVisualize(): UseVisualizeReturn {
       setError(null);
       setResult(null);
       setProgress(null);
+      setDebugLog(null);
 
       try {
         const apiKey = getApiKey();
@@ -226,6 +235,10 @@ export function useVisualize(): UseVisualizeReturn {
                   message: statusData.message,
                   attempt: statusData.attempt,
                 });
+                break;
+              }
+              case 'debug_log': {
+                setDebugLog(event.data as DebugLogEventData);
                 break;
               }
               case 'result': {
@@ -292,6 +305,7 @@ export function useVisualize(): UseVisualizeReturn {
       setIsLoading(true);
       setError(null);
       setProgress(null);
+      setDebugLog(null);
 
       try {
         const apiKey = getApiKey();
@@ -314,6 +328,10 @@ export function useVisualize(): UseVisualizeReturn {
                   message: statusData.message,
                   attempt: statusData.attempt,
                 });
+                break;
+              }
+              case 'debug_log': {
+                setDebugLog(event.data as DebugLogEventData);
                 break;
               }
               case 'result': {
@@ -390,6 +408,7 @@ export function useVisualize(): UseVisualizeReturn {
       setIsLoading(true);
       setError(null);
       setProgress(null);
+      setDebugLog(null);
 
       try {
         const apiKey = getApiKey();
@@ -412,6 +431,10 @@ export function useVisualize(): UseVisualizeReturn {
                   message: statusData.message,
                   attempt: statusData.attempt,
                 });
+                break;
+              }
+              case 'debug_log': {
+                setDebugLog(event.data as DebugLogEventData);
                 break;
               }
               case 'result': {
@@ -521,6 +544,7 @@ export function useVisualize(): UseVisualizeReturn {
     progress,
     session,
     hasActiveSession: session !== null,
+    debugLog,
     generateVisualization,
     continueVisualization,
     replayVisualization,

@@ -11,10 +11,14 @@ spawns the claude CLI as a subprocess, which requires the main event loop.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import traceback
 from collections.abc import AsyncIterator
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -161,6 +165,8 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
     messages: list[dict[str, Any]] = []
     result_text: str | None = None
 
+    logger.info("Starting agent SDK query (prompt length: %d chars)", len(prompt))
+
     try:
         async for message in query(prompt=_as_stream(prompt), options=options):
             if isinstance(message, AssistantMessage):
@@ -168,6 +174,7 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         content_items.append({"type": "text", "text": block.text})
+                        logger.debug("Agent text: %.200s", block.text)
                     elif isinstance(block, ToolUseBlock):
                         content_items.append({
                             "type": "tool_use",
@@ -180,6 +187,7 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
                             "input": block.input,
                             "result": None,
                         })
+                        logger.info("Agent tool call: %s(%s)", block.name, block.input)
                     elif isinstance(block, ToolResultBlock):
                         content_text = block.content if isinstance(block.content, str) else str(block.content)
                         # Update the last matching tool call with its result
@@ -193,12 +201,15 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
                             "tool_use_id": block.tool_use_id,
                             "content": content_text,
                         })
+                        logger.info("Tool result (id=%s): %.200s", block.tool_use_id, content_text)
                 if content_items:
                     messages.append({"role": "assistant", "content": content_items})
 
             elif isinstance(message, ResultMessage):
                 result_text = message.result
+                logger.info("Agent result received (is_error=%s, length=%d)", message.is_error, len(result_text) if result_text else 0)
                 if message.is_error:
+                    logger.error("Agent SDK returned error: %s", result_text)
                     return AgentResult(
                         success=False,
                         error=f"Agent SDK error: {result_text}",
@@ -212,6 +223,7 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
         if isinstance(e, BaseExceptionGroup):
             sub_errors = [str(exc) for exc in e.exceptions]
             error_msg = "; ".join(sub_errors)
+        logger.error("Agent SDK exception: %s\n%s", error_msg, traceback.format_exc())
         return AgentResult(
             success=False,
             error=f"Agent SDK error: {error_msg}",
@@ -222,6 +234,7 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
     if result_text:
         code = _extract_code_from_text(result_text)
         if code:
+            logger.info("Extracted code from result_text (%d chars)", len(code))
             return AgentResult(
                 success=True,
                 code=code,
@@ -236,6 +249,7 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
                 if isinstance(item, dict) and item.get("type") == "text":
                     code = _extract_code_from_text(item["text"])
                     if code:
+                        logger.info("Extracted code from assistant message (%d chars)", len(code))
                         return AgentResult(
                             success=True,
                             code=code,
@@ -243,6 +257,7 @@ async def _run_query(prompt: str, options: ClaudeAgentOptions) -> AgentResult:
                             messages=messages,
                         )
 
+    logger.warning("No code block found in agent response. result_text=%.500s, messages=%d", result_text or "None", len(messages))
     return AgentResult(
         success=False,
         error=f"No code block found in response. Result: {result_text[:500] if result_text else 'Empty'}",
