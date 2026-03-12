@@ -1,0 +1,214 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AnyPlot Configuration",
+  "description": "Configuration schema for AnyPlot application",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Configuration version"
+    },
+    "privacy": {
+      "type": "object",
+      "description": "Privacy and differential privacy settings",
+      "properties": {
+        "default_epsilon": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 10.0,
+          "description": "Default epsilon value for differential privacy"
+        },
+        "max_budget_per_session": {
+          "type": "number",
+          "minimum": 0.1,
+          "description": "Maximum privacy budget per session"
+        },
+        "clip_percentiles": {
+          "type": "array",
+          "items": {"type": "number", "minimum": 0, "maximum": 100},
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Percentiles for outlier clipping [lower, upper]"
+        },
+        "min_samples_for_stats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum number of samples required for statistics"
+        }
+      },
+      "required": ["default_epsilon", "max_budget_per_session"]
+    },
+    "sandbox": {
+      "type": "object",
+      "description": "Code execution sandbox settings",
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 300,
+          "description": "Maximum execution time in seconds"
+        },
+        "memory_limit_mb": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 4096,
+          "description": "Memory limit in megabytes"
+        },
+        "allowed_imports": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of allowed Python imports"
+        },
+        "blocked_imports": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of blocked Python imports"
+        },
+        "temp_dir": {
+          "type": "string",
+          "description": "Temporary directory for sandbox execution"
+        }
+      },
+      "required": ["timeout_seconds", "memory_limit_mb"]
+    },
+    "model": {
+      "type": "object",
+      "description": "LLM model configuration",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "local"],
+          "description": "LLM provider"
+        },
+        "model_name": {
+          "type": "string",
+          "description": "Model name or identifier"
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Model temperature"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 100000,
+          "description": "Maximum tokens to generate"
+        },
+        "system_prompt": {
+          "type": "string",
+          "description": "System prompt for the model"
+        }
+      },
+      "required": ["provider", "model_name"]
+    },
+    "server": {
+      "type": "object",
+      "description": "Server configuration",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Server host"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Server port"
+        },
+        "cors_origins": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Allowed CORS origins"
+        },
+        "max_request_size_mb": {
+          "type": "integer",
+          "description": "Maximum request size in MB"
+        },
+        "session_timeout_minutes": {
+          "type": "integer",
+          "description": "Session timeout in minutes"
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "description": "Frontend configuration",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "enum": ["light", "dark", "auto"],
+          "description": "UI theme"
+        },
+        "max_rows_preview": {
+          "type": "integer",
+          "description": "Maximum rows to show in preview"
+        },
+        "sql_timeout_ms": {
+          "type": "integer",
+          "description": "SQL query timeout in milliseconds"
+        },
+        "enable_debug_panel": {
+          "type": "boolean",
+          "description": "Show debug panel in development"
+        }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+          "description": "Log level"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["text", "json"],
+          "description": "Log format"
+        },
+        "output": {
+          "type": "string",
+          "description": "Log output destination"
+        },
+        "privacy_audit_log": {
+          "type": "string",
+          "description": "Privacy audit log file path"
+        },
+        "performance_log": {
+          "type": "string",
+          "description": "Performance log file path"
+        }
+      }
+    },
+    "development": {
+      "type": "object",
+      "description": "Development mode settings",
+      "properties": {
+        "mock_mode": {
+          "type": "boolean",
+          "description": "Use mock responses instead of real API calls"
+        },
+        "hot_reload": {
+          "type": "boolean",
+          "description": "Enable hot reload"
+        },
+        "verbose_errors": {
+          "type": "boolean",
+          "description": "Show verbose error messages"
+        },
+        "save_generated_code": {
+          "type": "boolean",
+          "description": "Save generated code to disk"
+        },
+        "code_output_dir": {
+          "type": "string",
+          "description": "Directory for saved generated code"
+        }
+      }
+    }
+  },
+  "required": ["version", "privacy", "sandbox", "model"]
+}

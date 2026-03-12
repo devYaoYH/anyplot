@@ -1,0 +1,21 @@
+date,region,product,revenue,units_sold,sales_rep
+2025-01-15,North,Widget A,15420.50,243,Alice Chen
+2025-01-18,South,Widget B,8950.75,127,Bob Martinez
+2025-01-22,East,Widget A,22150.00,301,Carol Singh
+2025-01-25,West,Widget C,12300.25,156,David Kim
+2025-02-03,North,Widget B,18750.00,245,Alice Chen
+2025-02-08,South,Widget A,9800.50,141,Bob Martinez
+2025-02-12,East,Widget C,25600.75,312,Carol Singh
+2025-02-19,West,Widget A,14200.00,189,David Kim
+2025-02-24,North,Widget C,19500.25,267,Alice Chen
+2025-03-02,South,Widget B,11400.75,163,Bob Martinez
+2025-03-07,East,Widget A,27800.50,341,Carol Singh
+2025-03-15,West,Widget B,16750.00,221,David Kim
+2025-03-21,North,Widget A,21300.75,298,Alice Chen
+2025-03-28,South,Widget C,13200.50,178,Bob Martinez
+2025-04-04,East,Widget B,29500.25,367,Carol Singh
+2025-04-11,West,Widget C,18900.00,243,David Kim
+2025-04-17,North,Widget B,23450.75,312,Alice Chen
+2025-04-24,South,Widget A,15800.50,204,Bob Martinez
+2025-05-01,East,Widget C,31200.00,389,Carol Singh
+2025-05-09,West,Widget A,20100.75,267,David Kim
